@@ -382,6 +382,24 @@ function repairToolCallPairing(input) {
     if (item && OUTPUT_TYPES.has(item.type) && item.call_id && !called.has(item.call_id)) {
       continue;
     }
+    if (item && OUTPUT_TYPES.has(item.type)) {
+      // LiteLLM drops tool messages with empty or non-string output, which
+      // orphans the matching tool call downstream. Normalize output payloads.
+      const out = item.output;
+      if (out === undefined || out === null || (typeof out === "string" && out.trim() === "")) {
+        repaired.push({ ...item, output: "[no output recorded]" });
+        continue;
+      }
+      if (typeof out !== "string") {
+        try {
+          repaired.push({ ...item, output: JSON.stringify(out) });
+          continue;
+        } catch {
+          repaired.push({ ...item, output: "[unserializable tool output]" });
+          continue;
+        }
+      }
+    }
     repaired.push(item);
     if (item && CALL_TYPES.has(item.type) && item.call_id && !answered.has(item.call_id)) {
       repaired.push({

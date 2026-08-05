@@ -83,6 +83,53 @@ function foldInterveningAssistantMessages(messages) {
   }
 }
 
+function repairChatToolPairing(messages) {
+  if (!Array.isArray(messages)) return;
+  // Kimi requires strict positional pairing: every assistant tool_call must
+  // be answered immediately after its own message, in call order. Upstream
+  // layers (Codex replay, LiteLLM conversion) can group all responses after
+  // the last of several consecutive assistant messages, which Kimi rejects.
+  // Reorder responses to directly follow their call, synthesize missing
+  // ones, and drop answerless tool messages.
+  const responsesByCallId = new Map();
+  for (const message of messages) {
+    if (message?.role === "tool" && message.tool_call_id) {
+      responsesByCallId.set(message.tool_call_id, message);
+    }
+  }
+  const result = [];
+  const emitted = new Set();
+  for (const message of messages) {
+    if (message?.role === "tool" && message.tool_call_id) {
+      if (!emitted.has(message.tool_call_id) && responsesByCallId.get(message.tool_call_id) === message) {
+        // emitted when its call is processed; drop strays otherwise
+        continue;
+      }
+      if (emitted.has(message.tool_call_id)) continue;
+      continue;
+    }
+    result.push(message);
+    if (Array.isArray(message?.tool_calls)) {
+      for (const call of message.tool_calls) {
+        if (!call?.id) continue;
+        const resp = responsesByCallId.get(call.id);
+        if (resp) {
+          result.push(resp);
+          emitted.add(call.id);
+        } else {
+          result.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content:
+              "[output unavailable — the turn was interrupted before this tool call produced a result]",
+          });
+        }
+      }
+    }
+  }
+  messages.splice(0, messages.length, ...result);
+}
+
 function normalizeKimiBody(buffer, contentType) {
   if (!buffer.length || !String(contentType || "").includes("application/json")) {
     return buffer;
@@ -90,6 +137,7 @@ function normalizeKimiBody(buffer, contentType) {
   const payload = JSON.parse(buffer.toString("utf8"));
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return buffer;
   foldInterveningAssistantMessages(payload.messages);
+  repairChatToolPairing(payload.messages);
   payload.thinking = { type: "enabled" };
   if (payload.model === "k3") {
     const effort = {
@@ -145,7 +193,7 @@ function tokenHealth() {
 }
 
 async function requestUpstream(request, target, body, token, signal) {
-  return fetch(target, {
+  const upstream = await fetch(target, {
     method: request.method,
     headers: {
       ...upstreamHeaders(request.headers, body),
@@ -154,6 +202,7 @@ async function requestUpstream(request, target, body, token, signal) {
     body: body.length ? body : undefined,
     signal,
   });
+  return upstream;
 }
 
 async function handleRequest(request, response) {
