@@ -352,6 +352,49 @@ function normalizeRoutedInput(input) {
     });
 }
 
+// Chat Completions requires every tool call to be answered by a matching tool
+// message, and rejects tool messages without a preceding call. Interrupted or
+// compacted Codex turns can leave either kind of orphan behind (LiteLLM then
+// fails the whole request with "an assistant message with 'tool_calls' must be
+// followed by tool messages responding to each 'tool_call_id'"). Synthesize
+// placeholder outputs for unanswered calls and drop answerless outputs.
+function repairToolCallPairing(input) {
+  if (!Array.isArray(input)) return input;
+  const CALL_TYPES = new Set(["function_call", "custom_tool_call"]);
+  const OUTPUT_TYPES = new Set([
+    "function_call_output",
+    "custom_tool_call_output",
+  ]);
+  const answered = new Set();
+  for (const item of input) {
+    if (item && OUTPUT_TYPES.has(item.type) && item.call_id) {
+      answered.add(item.call_id);
+    }
+  }
+  const called = new Set();
+  for (const item of input) {
+    if (item && CALL_TYPES.has(item.type) && item.call_id) {
+      called.add(item.call_id);
+    }
+  }
+  const repaired = [];
+  for (const item of input) {
+    if (item && OUTPUT_TYPES.has(item.type) && item.call_id && !called.has(item.call_id)) {
+      continue;
+    }
+    repaired.push(item);
+    if (item && CALL_TYPES.has(item.type) && item.call_id && !answered.has(item.call_id)) {
+      repaired.push({
+        type: "function_call_output",
+        call_id: item.call_id,
+        output:
+          "[output unavailable — the turn was interrupted before this tool call produced a result]",
+      });
+    }
+  }
+  return repaired;
+}
+
 // OpenAI-issued reasoning `encrypted_content` is an opaque token (Fernet-style,
 // e.g. "gAAAAAB...") with no whitespace. Some local Responses providers (notably
 // Ollama) mimic the reasoning-item shape but fill `encrypted_content` with the
@@ -455,7 +498,7 @@ async function summarize(payload, route, signal) {
     tools: [],
     tool_choice: "none",
     input: [
-      ...normalizeRoutedInput(originalInput),
+      ...repairToolCallPairing(normalizeRoutedInput(originalInput)),
       messageItem(COMPACT_PROMPT),
     ],
   };
@@ -633,7 +676,7 @@ async function handleResponses(request, response, requestUrl) {
       const routed = {
         ...payload,
         model: route.gatewayModel,
-        input: normalizeRoutedInput(payload.input),
+        input: repairToolCallPairing(normalizeRoutedInput(payload.input)),
       };
       target = `${GATEWAY_BASE}/responses`;
       headers = routedHeaders();
