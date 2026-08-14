@@ -574,6 +574,61 @@ function writeCompactionSse(response, model, summary) {
   response.end("data: [DONE]\n\n");
 }
 
+async function handleNativeCompaction(response, payload, request, signal) {
+  // Native (OpenAI) models: the ChatGPT backend has no /responses/compact
+  // endpoint (404), so perform the summarization through the native
+  // /responses endpoint ourselves and wrap the result like a v1 compact.
+  const originalInput = Array.isArray(payload.input) ? payload.input : [];
+  const body = {
+    ...payload,
+    stream: true,
+    store: false,
+    tools: [],
+    tool_choice: "none",
+    input: [
+      ...normalizeNativeInput(originalInput),
+      messageItem(COMPACT_PROMPT),
+    ],
+  };
+  delete body.previous_response_id;
+  const upstream = await fetch(nativeTarget("/responses", ""), {
+    method: "POST",
+    headers: nativeHeaders(request),
+    body: JSON.stringify(body),
+    signal,
+  });
+  const bytes = Buffer.from(await upstream.arrayBuffer());
+  const rawText = bytes.toString("utf8");
+  if (!upstream.ok) {
+    let errPayload;
+    try {
+      errPayload = JSON.parse(rawText);
+    } catch {
+      errPayload = { error: { message: rawText.slice(0, 300) } };
+    }
+    writeJson(response, upstream.status, errPayload);
+    return;
+  }
+  // Backend requires streaming; response.completed carries an empty output
+  // array, so collect the finished output_text segments instead.
+  const parts = [];
+  let completed = null;
+  for (const line of rawText.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    try {
+      const evt = JSON.parse(line.slice(5).trim());
+      if (evt?.type === "response.output_text.done" && typeof evt.text === "string") {
+        parts.push(evt.text);
+      } else if (evt?.type === "response.completed" && evt.response) {
+        completed = evt.response;
+      }
+    } catch {}
+  }
+  let summary = parts.join("\n").trim();
+  if (!summary && completed) summary = extractResponseText(completed) || "";
+  writeJson(response, 200, { output: compactOutput(originalInput, summary) });
+}
+
 async function handleRoutedCompaction(response, payload, route, signal, v2) {
   const result = await summarize(payload, route, signal);
   if (!result.ok) {
@@ -684,6 +739,10 @@ async function handleResponses(request, response, requestUrl) {
 
     if (route && (compactV1 || compactV2)) {
       await handleRoutedCompaction(response, payload, route, controller.signal, compactV2);
+      return;
+    }
+    if (!route && compactV1) {
+      await handleNativeCompaction(response, payload, request, controller.signal);
       return;
     }
 
