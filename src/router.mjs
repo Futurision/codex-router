@@ -310,6 +310,71 @@ function messageItem(text) {
   };
 }
 
+const ROUTED_TOOL_OUTPUT_TYPES = new Set([
+  "function_call_output",
+  "custom_tool_call_output",
+]);
+const ROUTED_DATA_IMAGE_PLACEHOLDER =
+  "[tool image omitted — embedded data URL removed from replay]";
+const ROUTED_DATA_IMAGE_VALUE =
+  /^data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[^;,\s"'<>]*)?)*;base64,[a-z0-9+/_=-]+$/iu;
+const ROUTED_DATA_IMAGE_URI =
+  /data:image\/[a-z0-9.+-]+(?:;[a-z0-9.+_-]+(?:=[^;,\s"'<>]*)?)*;base64,[a-z0-9+/_=-]+/giu;
+
+function sanitizeRoutedDataImageValue(value) {
+  if (typeof value === "string") {
+    return value.replace(ROUTED_DATA_IMAGE_URI, ROUTED_DATA_IMAGE_PLACEHOLDER);
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const sanitized = value.map((entry) => {
+      const next = sanitizeRoutedDataImageValue(entry);
+      if (next !== entry) changed = true;
+      return next;
+    });
+    return changed ? sanitized : value;
+  }
+  if (!value || typeof value !== "object") return value;
+  const imageUrl =
+    typeof value.image_url === "string"
+      ? value.image_url
+      : value.image_url?.url;
+  if (
+    ["input_image", "image", "image_url"].includes(value.type) &&
+    typeof imageUrl === "string" &&
+    ROUTED_DATA_IMAGE_VALUE.test(imageUrl)
+  ) {
+    return { type: "input_text", text: ROUTED_DATA_IMAGE_PLACEHOLDER };
+  }
+  let changed = false;
+  const sanitized = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const next = sanitizeRoutedDataImageValue(entry);
+    if (next !== entry) changed = true;
+    sanitized[key] = next;
+  }
+  return changed ? sanitized : value;
+}
+
+// Tool screenshots are useful locally but a base64 data URI can add millions
+// of characters to every replayed request. External routed providers do not
+// need those bytes. Remove only embedded data:image URIs from tool outputs;
+// retain surrounding prose, remote HTTPS image references, item ordering, and
+// the original tool call identifiers. Native OpenAI requests never use this
+// transform.
+function sanitizeRoutedToolOutputImages(input) {
+  if (!Array.isArray(input)) return input;
+  let changed = false;
+  const sanitized = input.map((item) => {
+    if (!item || !ROUTED_TOOL_OUTPUT_TYPES.has(item.type)) return item;
+    const output = sanitizeRoutedDataImageValue(item.output);
+    if (output === item.output) return item;
+    changed = true;
+    return { ...item, output };
+  });
+  return changed ? sanitized : input;
+}
+
 function normalizeRoutedInput(input) {
   if (!Array.isArray(input)) return input;
   return input
@@ -507,8 +572,49 @@ function extractResponseText(payload) {
   return text.join("\n");
 }
 
+const COMPACT_INPUT_MAX_CHARS = 3_200_000;
+
+// A compaction request carries the whole context; if that context is already
+// at/over the model window, the summarize call itself gets rejected
+// ("request exceeded model token limit") and the thread dead-locks. Keep only
+// the newest items within a conservative character budget (~800k tokens).
+function trimInputToBudget(items, maxChars) {
+  if (!Array.isArray(items)) return items;
+  const kept = [];
+  let total = 0;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    let size = 0;
+    try {
+      size = JSON.stringify(items[i]).length;
+    } catch {
+      continue;
+    }
+    if (kept.length > 0 && total + size > maxChars) break;
+    total += size;
+    kept.unshift(items[i]);
+  }
+  if (total <= maxChars) return kept;
+  // Even the newest item alone exceeds the budget: truncate long text fields.
+  return kept.map((item) => {
+    const clone = JSON.parse(JSON.stringify(item));
+    const budget = Math.floor(maxChars / kept.length);
+    const walk = (node) => {
+      if (typeof node === "string" && node.length > budget) {
+        return node.slice(0, budget) + "\n[truncated for compaction]";
+      }
+      if (Array.isArray(node)) return node.map(walk);
+      if (node && typeof node === "object") {
+        for (const k of Object.keys(node)) node[k] = walk(node[k]);
+      }
+      return node;
+    };
+    return walk(clone);
+  });
+}
+
 async function summarize(payload, route, signal) {
   const originalInput = Array.isArray(payload.input) ? payload.input : [];
+  const sanitizedInput = sanitizeRoutedToolOutputImages(originalInput);
   const body = {
     ...payload,
     model: route.gatewayModel,
@@ -516,7 +622,9 @@ async function summarize(payload, route, signal) {
     tools: [],
     tool_choice: "none",
     input: [
-      ...repairToolCallPairing(normalizeRoutedInput(originalInput)),
+      ...repairToolCallPairing(
+        normalizeRoutedInput(trimInputToBudget(sanitizedInput, COMPACT_INPUT_MAX_CHARS)),
+      ),
       messageItem(COMPACT_PROMPT),
     ],
   };
@@ -586,7 +694,7 @@ async function handleNativeCompaction(response, payload, request, signal) {
     tools: [],
     tool_choice: "none",
     input: [
-      ...normalizeNativeInput(originalInput),
+      ...normalizeNativeInput(trimInputToBudget(originalInput, COMPACT_INPUT_MAX_CHARS)),
       messageItem(COMPACT_PROMPT),
     ],
   };
@@ -753,7 +861,9 @@ async function handleResponses(request, response, requestUrl) {
       const routed = {
         ...payload,
         model: route.gatewayModel,
-        input: repairToolCallPairing(normalizeRoutedInput(payload.input)),
+        input: repairToolCallPairing(
+          normalizeRoutedInput(sanitizeRoutedToolOutputImages(payload.input)),
+        ),
       };
       target = `${GATEWAY_BASE}/responses`;
       headers = routedHeaders();

@@ -630,6 +630,209 @@ test("router sends standalone image requests only to the native OpenAI backend",
   }
 });
 
+test("router strips only data images from routed tool outputs and leaves native input intact", async () => {
+  const routedRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    routedRequests.push(await bodyJson(request));
+    json(response, 200, { route: "external" });
+  });
+  const nativeRequests = [];
+  const native = await mockServer(async (request, response) => {
+    nativeRequests.push(await bodyJson(request));
+    json(response, 200, { route: "native" });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = {
+    Authorization: "Bearer CODEX_CALLER_SECRET",
+    "Content-Type": "application/json",
+  };
+  const embeddedImage = "data:image/png;base64,Zm9vYmFy==";
+  const remoteImage = "https://images.example.test/safe.png";
+  const harmlessDataImageProse =
+    "Documentation keeps the literal data:image/png;base64, prefix unchanged.";
+  const input = [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "inspect the screenshots" }],
+    },
+    {
+      type: "custom_tool_call",
+      call_id: "call_custom_image",
+      name: "view_image",
+      input: "{}",
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: "call_custom_image",
+      output: [
+        { type: "input_text", text: "prefix prose" },
+        { type: "input_image", image_url: embeddedImage, detail: "original" },
+        { type: "input_image", image_url: remoteImage, detail: "high" },
+        { type: "input_text", text: harmlessDataImageProse },
+        { type: "input_text", text: "suffix prose" },
+      ],
+    },
+    {
+      type: "function_call",
+      call_id: "call_function_image",
+      name: "capture",
+      arguments: "{}",
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_function_image",
+      output: `before ${embeddedImage} after; remote=${remoteImage}`,
+    },
+  ];
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const routed = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "deepseek/deepseek-v4-pro", input }),
+    });
+    assert.equal(routed.status, 200);
+
+    const sent = routedRequests[0].input;
+    assert.deepEqual(
+      sent.map((item) => [item.type, item.call_id]),
+      input.map((item) => [item.type, item.call_id]),
+    );
+    const customOutput = JSON.parse(sent[2].output);
+    assert.equal(customOutput[0].text, "prefix prose");
+    assert.deepEqual(customOutput[1], {
+      type: "input_text",
+      text: "[tool image omitted — embedded data URL removed from replay]",
+    });
+    assert.equal(customOutput[2].image_url, remoteImage);
+    assert.equal(customOutput[2].detail, "high");
+    assert.equal(customOutput[3].text, harmlessDataImageProse);
+    assert.equal(customOutput[4].text, "suffix prose");
+    assert.equal(
+      sent[4].output,
+      `before [tool image omitted — embedded data URL removed from replay] after; remote=${remoteImage}`,
+    );
+    assert.doesNotMatch(JSON.stringify(sent), /data:image\/png;base64,Zm9vYmFy/i);
+    assert.match(JSON.stringify(sent), /literal data:image\/png;base64, prefix/);
+
+    const nativeResponse = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: "gpt-5.6-sol", input }),
+    });
+    assert.equal(nativeResponse.status, 200);
+    assert.equal(JSON.stringify(nativeRequests[0].input), JSON.stringify(input));
+  } finally {
+    await stopChild(router);
+    await Promise.all([closeServer(native.server), closeServer(gateway.server)]);
+  }
+});
+
+test("routed compaction strips data images before applying its input budget", async () => {
+  const gatewayRequests = [];
+  const gateway = await mockServer(async (request, response) => {
+    gatewayRequests.push(await bodyJson(request));
+    json(response, 200, {
+      id: "resp-summary",
+      object: "response",
+      output: [
+        {
+          type: "message",
+          content: [{ type: "output_text", text: "compact summary" }],
+        },
+      ],
+    });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_GATEWAY_BASE_URL: `http://127.0.0.1:${gateway.port}/v1`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = {
+    Authorization: "Bearer CODEX_CALLER_SECRET",
+    "Content-Type": "application/json",
+  };
+  const oldMarker = "old context retained after image sanitization";
+  const remoteImage = "https://images.example.test/keep-during-compaction.png";
+  const callId = "call_large_screenshot";
+  const input = [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: oldMarker }],
+    },
+    {
+      type: "custom_tool_call",
+      call_id: callId,
+      name: "view_image",
+      input: "{}",
+    },
+    {
+      type: "custom_tool_call_output",
+      call_id: callId,
+      output: [
+        { type: "input_text", text: "before large screenshot" },
+        {
+          type: "input_image",
+          image_url: `data:image/png;base64,${"A".repeat(3_250_000)}`,
+        },
+        { type: "input_image", image_url: remoteImage },
+        { type: "input_text", text: "after large screenshot" },
+      ],
+    },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: "newest context" }],
+    },
+    { type: "compaction_trigger" },
+  ];
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "deepseek/deepseek-v4-pro",
+        stream: false,
+        input,
+      }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).output[0].type, "compaction");
+
+    const sent = gatewayRequests[0].input;
+    assert.equal(sent[0].content[0].text, oldMarker);
+    const callIndex = sent.findIndex((item) => item.call_id === callId);
+    assert.ok(callIndex >= 0);
+    assert.equal(sent[callIndex].type, "custom_tool_call");
+    assert.equal(sent[callIndex + 1].type, "custom_tool_call_output");
+    assert.equal(sent[callIndex + 1].call_id, callId);
+    const output = JSON.parse(sent[callIndex + 1].output);
+    assert.equal(output[0].text, "before large screenshot");
+    assert.deepEqual(output[1], {
+      type: "input_text",
+      text: "[tool image omitted — embedded data URL removed from replay]",
+    });
+    assert.equal(output[2].image_url, remoteImage);
+    assert.equal(output[3].text, "after large screenshot");
+    assert.ok(JSON.stringify(sent).length < 3_200_000);
+  } finally {
+    await stopChild(router);
+    await closeServer(gateway.server);
+  }
+});
+
 test("router synthesizes routed compaction and safely replays it to native models", async () => {
   const gatewayRequests = [];
   const gateway = await mockServer(async (request, response) => {
