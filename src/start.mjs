@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { assertCallerSecret } from "./caller-auth.mjs";
+import { claudeCodeBinary } from "./claude-code-status.mjs";
 import {
   CALLER_SECRET_PATH,
   INTERNAL_SECRET_PATH,
@@ -58,6 +59,8 @@ const commonEnv = {
   MODEL_ROUTER_PORT: String(PORTS.router),
   MODEL_ROUTER_GROK_OAUTH_PORT: String(PORTS.grokOauth),
   GROK_OAUTH_FORWARD_BASE_URL: loopback(PORTS.grokOauth, "/v1"),
+  MODEL_ROUTER_CLAUDE_CODE_PORT: String(PORTS.claudeCode),
+  CLAUDE_CODE_FORWARD_BASE_URL: loopback(PORTS.claudeCode, "/v1"),
   MODEL_ROUTER_QUIET: "1",
   CODEX_ROUTER_CALLER_KEY: callerKey,
   CODEX_ROUTER_INTERNAL_KEY: internalKey,
@@ -68,10 +71,12 @@ const commonEnv = {
   CODEX_ROUTER_GATEWAY_BASE_URL: loopback(PORTS.gateway, "/v1"),
   CODEX_ROUTER_OAUTH_HEALTH_URL: loopback(PORTS.oauth, "/health"),
   CODEX_ROUTER_API_HEALTH_URL: loopback(PORTS.api, "/health"),
+  CODEX_ROUTER_CLAUDE_CODE_HEALTH_URL: loopback(PORTS.claudeCode, "/health"),
   CODEX_ROUTER_GATEWAY_HEALTH_URL: loopback(PORTS.gateway, "/health/liveliness"),
   CODEX_ROUTER_CATALOG: MERGED_CATALOG_PATH,
   CODEX_ROUTER_OAUTH_PORT: String(PORTS.oauth),
   CODEX_ROUTER_API_PORT: String(PORTS.api),
+  CODEX_ROUTER_CLAUDE_CODE_PORT: String(PORTS.claudeCode),
   CODEX_ROUTER_GATEWAY_PORT: String(PORTS.gateway),
   CODEX_ROUTER_PORT: String(PORTS.router),
   LITELLM_MASTER_KEY: internalKey,
@@ -79,6 +84,8 @@ const commonEnv = {
   LITELLM_TELEMETRY: "False",
   NO_COLOR: "1",
 };
+const claudeBinary = claudeCodeBinary();
+if (claudeBinary) commonEnv.CLAUDE_CODE_BIN = claudeBinary;
 
 const children = [];
 let shuttingDown = false;
@@ -102,7 +109,14 @@ function waitForExit(child, label) {
   });
 }
 
-async function waitForHealth(url, headers = {}, timeoutMs = 30_000, expectedService, child) {
+async function waitForHealth(
+  url,
+  headers = {},
+  timeoutMs = 30_000,
+  expectedService,
+  child,
+  requestTimeoutMs = 1_000,
+) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (child && (child.exitCode !== null || child.signalCode !== null)) {
@@ -112,7 +126,7 @@ async function waitForHealth(url, headers = {}, timeoutMs = 30_000, expectedServ
     try {
       const response = await fetch(url, {
         headers,
-        signal: AbortSignal.timeout(1_000),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       });
       if (response.ok) {
         if (!expectedService) return;
@@ -162,6 +176,13 @@ async function main() {
     Authorization: `Bearer ${internalKey}`,
   }, 30_000, undefined, grokOauth);
 
+  const claudeCode = run(process.execPath, [
+    path.join(SOURCE_ROOT, "src", "claude-code-forwarder.mjs"),
+  ]);
+  await waitForHealth(loopback(PORTS.claudeCode, "/health"), {
+    Authorization: `Bearer ${internalKey}`,
+  }, 30_000, "codex-router-claude-code-forwarder", claudeCode, 2_500);
+
   const gateway = run(litellm, [
     "--config",
     LITELLM_CONFIG_PATH,
@@ -197,6 +218,7 @@ async function main() {
     waitForExit(oauth, "OAuth forwarder"),
     waitForExit(api, "API forwarder"),
     waitForExit(grokOauth, "Grok OAuth forwarder"),
+    waitForExit(claudeCode, "Claude Code forwarder"),
     waitForExit(gateway, "LiteLLM gateway"),
     waitForExit(router, frontend.label),
   ]);

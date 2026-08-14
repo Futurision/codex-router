@@ -25,6 +25,7 @@ function portsForTarget(target) {
         MODEL_ROUTER_PORT: "",
         MODEL_ROUTER_API_PORT: "",
         MODEL_ROUTER_GROK_OAUTH_PORT: "",
+        MODEL_ROUTER_CLAUDE_CODE_PORT: "",
       },
     },
   );
@@ -38,10 +39,11 @@ test("Cursor path defaults are its own dedicated ports", () => {
     router: 4104,
     api: 4107,
     grokOauth: 4116,
+    claudeCode: 4117,
   });
 });
 
-test("every target's five ports are pairwise disjoint across all targets", () => {
+test("every target's ports are pairwise disjoint across all targets", () => {
   const targets = ["codex", "cursor"];
   const seen = new Map();
   for (const target of targets) {

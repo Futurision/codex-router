@@ -74,6 +74,13 @@ function run(script, env) {
       CODEX_ROUTER_INTERNAL_KEY: INTERNAL_KEY,
       KIMI_INTERNAL_KEY: INTERNAL_KEY,
       CODEX_ROUTER_SHOW_ALL_MODELS: "1",
+      ...(env?.CODEX_ROUTER_GATEWAY_HEALTH_URL &&
+      !env?.CODEX_ROUTER_CLAUDE_CODE_HEALTH_URL
+        ? {
+            CODEX_ROUTER_CLAUDE_CODE_HEALTH_URL:
+              env.CODEX_ROUTER_GATEWAY_HEALTH_URL,
+          }
+        : {}),
       ...env,
     },
     stdio: ["ignore", "ignore", "pipe"],
@@ -141,11 +148,65 @@ test("router health waits for enabled dependencies and ignores disabled forwarde
 
   try {
     await waitFor(`http://127.0.0.1:${routerPort}/health`, router);
-    const response = await fetch(`http://127.0.0.1:${routerPort}/health`);
+    const response = await fetch(`${routerBase(routerPort)}/health`);
     assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.claude_code, { reachable: true, enabled: false });
   } finally {
     await stopChild(router);
     await closeServer(healthy.server);
+    rmSync(testRoot, { recursive: true, force: true });
+  }
+});
+
+test("router health requires Claude readiness only when Claude is selected", async () => {
+  const testRoot = mkdtempSync(path.join(os.tmpdir(), "router-health-claude-ready-"));
+  writeFileSync(
+    path.join(testRoot, "enabled-providers.json"),
+    `${JSON.stringify({ version: 1, providers: ["claude-code"] })}\n`,
+    { mode: 0o600 },
+  );
+  let ready = false;
+  const dependencies = await mockServer(async (request, response) => {
+    if (request.url === "/claude-health") {
+      json(response, 200, {
+        ok: true,
+        ready,
+        cli_installed: true,
+        credential_present: ready,
+      });
+      return;
+    }
+    json(response, 200, { ok: true });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_ROUTER_STATE_DIR: testRoot,
+    CODEX_ROUTER_SHOW_ALL_MODELS: "0",
+    CODEX_ROUTER_CLAUDE_CODE_HEALTH_URL:
+      `http://127.0.0.1:${dependencies.port}/claude-health`,
+    CODEX_ROUTER_GATEWAY_HEALTH_URL:
+      `http://127.0.0.1:${dependencies.port}/gateway-health`,
+    CODEX_ROUTER_QUIET: "1",
+  });
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const unready = await fetch(`http://127.0.0.1:${routerPort}/health`);
+    assert.equal(unready.status, 503);
+    const protectedUnready = await fetch(`${routerBase(routerPort)}/health`);
+    assert.equal(protectedUnready.status, 503);
+    const unreadyPayload = await protectedUnready.json();
+    assert.equal(unreadyPayload.claude_code.reachable, true);
+    assert.equal(unreadyPayload.claude_code.ready, false);
+
+    ready = true;
+    const healthy = await fetch(`http://127.0.0.1:${routerPort}/health`);
+    assert.equal(healthy.status, 200);
+  } finally {
+    await stopChild(router);
+    await closeServer(dependencies.server);
     rmSync(testRoot, { recursive: true, force: true });
   }
 });
@@ -166,6 +227,7 @@ test("router requires the configured path capability before any model route", as
       healthAuth.push(request.headers.authorization);
       json(response, 200, {
         ok: true,
+        ready: true,
         credential_present: true,
         credential_source: "protected-test-state",
       });
@@ -317,6 +379,8 @@ test("router requires the configured path capability before any model route", as
     assert.equal(protectedHealth.status, 200);
     const protectedPayload = await protectedHealth.json();
     assert.equal(protectedPayload.oauth.credential_present, true);
+    assert.equal(protectedPayload.claude_code.credential_present, true);
+    assert.equal(protectedPayload.claude_code.ready, true);
     assert.ok(healthAuth.every((value) => value === `Bearer ${INTERNAL_KEY}`));
   } finally {
     await stopChild(router);
@@ -327,7 +391,7 @@ test("router requires the configured path capability before any model route", as
 test("a canceled request does not flip activity into the error state", async () => {
   const gateway = await mockServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/health") {
-      json(response, 200, { ok: true, credential_present: true });
+      json(response, 200, { ok: true, ready: true, credential_present: true });
       return;
     }
     const body = await bodyJson(request);

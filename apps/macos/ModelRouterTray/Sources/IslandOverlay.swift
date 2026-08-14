@@ -592,6 +592,7 @@ private struct IslandOverlayView: View {
     let provider = store.selectedUsageProviderID
     if provider == "openai" { return "CHATGPT • NATIVE" }
     if provider == "grok-oauth" { return "XAI • OAUTH SESSION" }
+    if provider == "claude-code" { return "CLAUDE CODE • SUBSCRIPTION" }
     if provider == "grok-api" { return "XAI • METERED API" }
     if provider.hasSuffix("-api") || provider == "deepseek" { return "METERED API" }
     return "OAUTH ROUTE"
@@ -941,6 +942,7 @@ private struct ProviderIcon: View {
     if providerID == "openai" { return "openai" }
     if providerID.hasPrefix("grok") { return "grok" }
     if providerID.hasPrefix("kimi") { return "kimi" }
+    if providerID == "claude-code" { return "anthropic" }
     if providerID == "deepseek" { return "deepseek" }
     if providerID == "anthropic-api" { return "anthropic" }
     return nil
@@ -950,6 +952,7 @@ private struct ProviderIcon: View {
     if providerID == "openai" { return "ChatGPT" }
     if providerID.hasPrefix("grok") { return "Grok" }
     if providerID.hasPrefix("kimi") { return "Kimi" }
+    if providerID == "claude-code" { return "Claude Code Subscription" }
     if providerID == "deepseek" { return "DeepSeek" }
     if providerID == "anthropic-api" { return "Anthropic" }
     if providerID == "zai-coding" { return "GLM" }
@@ -1098,7 +1101,7 @@ private struct IslandSessionList: View {
   private func shortModelSummary(_ session: IslandActivitySession) -> String {
     let models = Array(Set(session.agents.compactMap(\.model))).sorted()
     guard let first = models.first else { return "Active" }
-    let short = first.split(separator: "/").last.map(String.init) ?? first
+    let short = routerModelDisplayName(first)
     return models.count == 1 ? short : "\(short) +\(models.count - 1)"
   }
 }

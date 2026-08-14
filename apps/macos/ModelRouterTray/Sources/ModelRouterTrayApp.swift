@@ -10,6 +10,17 @@ let routerRed = Color(red: 0.91, green: 0.35, blue: 0.32)
 let routerInk = Color(red: 0.035, green: 0.043, blue: 0.055)
 let routerMuted = Color.secondary.opacity(0.72)
 
+func routerModelDisplayName(_ model: String) -> String {
+  switch model.lowercased() {
+  case "claude-code/opus-5", "claude-code-opus-5", "claude-opus-5":
+    return "Claude Opus 5"
+  case "claude-code/fable-5", "claude-code-fable-5", "claude-fable-5":
+    return "Claude Fable 5"
+  default:
+    return model.split(separator: "/").last.map(String.init) ?? model
+  }
+}
+
 enum RouterActivityState: String, Decodable {
   case idle
   case generating
@@ -137,6 +148,7 @@ final class RouterStore: ObservableObject {
   private static let providerShortNames: [String: String] = [
     "grok-oauth": "Grok",
     "kimi-oauth": "Kimi",
+    "claude-code": "Claude Code",
     "deepseek": "DeepSeek",
     "grok-api": "Grok API",
     "kimi-api": "Kimi API",
@@ -146,10 +158,19 @@ final class RouterStore: ObservableObject {
     "ollama-cloud": "Ollama",
   ]
 
+  private static let providerDisplayNames: [String: String] = [
+    "claude-code": "Claude Code Subscription",
+  ]
+
+  static func displayName(forRegistryProvider provider: RouterProviderInfo) -> String {
+    providerDisplayNames[provider.id] ?? provider.displayName
+  }
+
   static func shortName(forRegistryProvider provider: RouterProviderInfo) -> String {
     if let short = providerShortNames[provider.id] { return short }
-    let base = provider.displayName.split(separator: "(").first.map(String.init)
-      ?? provider.displayName
+    let displayName = displayName(forRegistryProvider: provider)
+    let base = displayName.split(separator: "(").first.map(String.init)
+      ?? displayName
     let trimmed = base.trimmingCharacters(in: .whitespaces)
     return trimmed.count > 12 ? String(trimmed.prefix(12)) : trimmed
   }
@@ -169,7 +190,7 @@ final class RouterStore: ObservableObject {
     for provider in registryProviders {
       choices.append(UsageProviderChoice(
         id: provider.id,
-        displayName: provider.displayName,
+        displayName: Self.displayName(forRegistryProvider: provider),
         shortName: Self.shortName(forRegistryProvider: provider),
         detail: providerDetail(provider.id, enabled: enabled),
         isEnabled: enabled.contains(provider.id)))
@@ -257,10 +278,7 @@ final class RouterStore: ObservableObject {
     guard let model = request.model, !model.isEmpty else {
       return displayName(forProvider: request.provider)
     }
-    if let slash = model.lastIndex(of: "/") {
-      return String(model[model.index(after: slash)...])
-    }
-    return model
+    return routerModelDisplayName(model)
   }
 
   func sessionName(for request: RouterActiveRequest) -> String {
@@ -814,7 +832,8 @@ final class RouterStore: ObservableObject {
 
   private func providerDetail(_ providerID: String, enabled: Set<String>) -> String {
     if enabled.contains(providerID) {
-      return providerID.hasSuffix("-oauth") ? "OAuth · enabled" : "API · enabled"
+      let isOAuth = providerID.hasSuffix("-oauth") || providerID == "claude-code"
+      return isOAuth ? "OAuth · enabled" : "API · enabled"
     }
     if providerSetup[providerID]?.configured == true { return "Ready to enable" }
     return "Needs setup"
@@ -1103,6 +1122,7 @@ struct RouterProviderInfo: Decodable {
   static let legacyFallback: [RouterProviderInfo] = [
     .init(id: "grok-oauth", displayName: "Grok OAuth", kind: "oauth"),
     .init(id: "kimi-oauth", displayName: "Kimi OAuth", kind: "oauth"),
+    .init(id: "claude-code", displayName: "Claude Code Subscription", kind: "oauth"),
     .init(id: "deepseek", displayName: "DeepSeek API", kind: "openai-compatible"),
     .init(id: "grok-api", displayName: "Grok API", kind: "openai-compatible"),
     .init(id: "kimi-api", displayName: "Kimi API", kind: "openai-compatible"),

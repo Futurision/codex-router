@@ -30,6 +30,7 @@ test("automatic selection-only setup exposes only configured providers", () => {
           CODEX_ROUTER_STATE_DIR: stateDir,
           KIMI_CODE_HOME: path.join(testRoot, "kimi-code"),
           GROK_AUTH_PATH: path.join(testRoot, "grok", "auth.json"),
+          CLAUDE_CODE_BIN: path.join(testRoot, "missing-claude"),
           CODEX_ROUTER_LAUNCH_AGENTS_DIR: path.join(testRoot, "LaunchAgents"),
           CODEX_ROUTER_SKIP_LAUNCHCTL: "1",
           DEEPSEEK_API_KEY: "",

@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "provider": "Claude Code",
+  "transport": "cli bridge",
+  "provider_version": "2.1.221",
+  "capture_command_or_request": "isolated official CLI capture plus isolated loopback bridge probes; live router and provider selection untouched",
+  "captured_at": "2026-08-14T14:49:36.751Z",
+  "redactions": [
+    "session and request ids",
+    "timings",
+    "provider cost estimates",
+    "generated tool-call ids"
+  ],
+  "evidence_notice": "Redacted real Claude Code output is stored separately from deterministic fake-CLI fixtures. Simulated records remain adapter-contract evidence only.",
+  "corpora": [
+    {
+      "id": "claude-code-2.1.221-real",
+      "evidence_type": "captured_real_provider_output",
+      "status": "observed",
+      "raw": ["claude-code-2.1.221-real-redacted.json"],
+      "evidence": "Sanitized native Opus text and Fable tool-envelope output plus isolated bridge observations."
+    },
+    {
+      "id": "fake-cli-v1",
+      "evidence_type": "simulated_adapter_contract",
+      "status": "observed",
+      "raw": ["claude-code-cli-cases.json"],
+      "evidence": "Deterministic fake executable cases; never use these records as provider evidence."
+    }
+  ],
+  "cases": [
+    {
+      "id": "assistant_text",
+      "status": "observed",
+      "raw": ["claude-code-2.1.221-real-redacted.json#opus_text_max"],
+      "simulated": ["claude-code-cli-cases.json#plain"],
+      "evidence": "Native Opus text result observed; deterministic plain text remains simulated too."
+    },
+    {
+      "id": "tool_calls",
+      "status": "observed",
+      "raw": ["claude-code-2.1.221-real-redacted.json#fable_tool_max"],
+      "simulated": [
+        "claude-code-cli-cases.json#single-tool",
+        "claude-code-cli-cases.json#parallel-tools",
+        "claude-code-cli-cases.json#schema-invalid-tool"
+      ],
+      "evidence": "Native Fable structured tool envelope observed; malformed and parallel variants remain simulated."
+    },
+    {
+      "id": "usage_and_success",
+      "status": "observed",
+      "raw": ["claude-code-2.1.221-real-redacted.json"],
+      "simulated": ["claude-code-cli-cases.json#plain"],
+      "evidence": "Real terminal result, success subtype, model usage, and token usage fields captured with volatile/account fields redacted."
+    },
+    {
+      "id": "resume",
+      "status": "not_observed",
+      "raw": [],
+      "simulated": [
+        "claude-code-cli-cases.json#resume-first",
+        "claude-code-cli-cases.json#resume-second"
+      ],
+      "evidence": "The bridge replay contract is simulated; no provider-native resume output is claimed."
+    },
+    {
+      "id": "provider_error",
+      "status": "not_observed",
+      "raw": [],
+      "simulated": [
+        "claude-code-cli-cases.json#auth-exit",
+        "claude-code-cli-cases.json#generic-exit",
+        "claude-code-cli-cases.json#provider-error",
+        "claude-code-cli-cases.json#malformed-output"
+      ],
+      "evidence": "Failure records are simulated and do not describe real Claude Code output."
+    },
+    {
+      "id": "cancellation",
+      "status": "not_observed",
+      "raw": [],
+      "simulated": ["claude-code-cli-cases.json#slow"],
+      "evidence": "Cancellation is exercised against the fake executable only."
+    },
+    {
+      "id": "provider_native_tool_execution",
+      "status": "unsupported",
+      "scope": "bridge_contract_only",
+      "raw": [],
+      "evidence": "The bridge deliberately invokes Claude Code with an empty --tools value so Codex remains the only tool executor. This is not a claim about the Claude Code product."
+    },
+    {
+      "id": "simulated_adapter_contract",
+      "status": "observed",
+      "evidence_type": "simulated_not_provider_evidence",
+      "raw": ["claude-code-cli-cases.json"],
+      "evidence": "The fake corpus covers text, tools, tool results, replay, errors, and cancellation at the adapter boundary."
+    },
+    {
+      "id": "raw_streaming",
+      "status": "not_observed",
+      "raw": [],
+      "simulated": [],
+      "evidence": "The forwarder currently synthesizes SSE after a terminal JSON result; no raw provider stream is captured."
+    }
+  ]
+}

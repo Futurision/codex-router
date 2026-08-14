@@ -787,6 +787,7 @@ enum ProviderKind {
 fn validate_provider(provider: &str) -> Result<(), String> {
     const PROVIDERS: &[&str] = &[
         "anthropic-api",
+        "claude-code",
         "kimi-oauth",
         "kimi-api",
         "deepseek",
@@ -802,7 +803,7 @@ fn validate_provider(provider: &str) -> Result<(), String> {
 
 fn validate_provider_kind(provider: &str, kind: ProviderKind) -> Result<(), String> {
     validate_provider(provider)?;
-    let is_oauth = matches!(provider, "kimi-oauth" | "grok-oauth");
+    let is_oauth = matches!(provider, "kimi-oauth" | "grok-oauth" | "claude-code");
     if is_oauth == matches!(kind, ProviderKind::Oauth) {
         Ok(())
     } else {
@@ -842,7 +843,10 @@ mod tests {
     #[test]
     fn accepts_only_known_provider_ids() {
         assert!(validate_provider("kimi-oauth").is_ok());
+        assert!(validate_provider("claude-code").is_ok());
         assert!(validate_provider("../../secret").is_err());
+        assert!(validate_provider_kind("claude-code", ProviderKind::Oauth).is_ok());
+        assert!(validate_provider_kind("claude-code", ProviderKind::Api).is_err());
         assert!(validate_provider_kind("deepseek", ProviderKind::Api).is_ok());
         assert!(validate_provider_kind("deepseek", ProviderKind::Oauth).is_err());
     }

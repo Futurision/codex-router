@@ -31,30 +31,38 @@ test("background service definitions render for macOS, Linux, and Windows", () =
     const launchd = render("service-macos.mjs", "darwin", testRoot);
     assert.match(launchd, /<string>io\.github\.codex-router<\/string>/);
     assert.match(launchd, /CODEX_ROUTER_STATE_DIR/);
+    assert.match(launchd, /MODEL_ROUTER_CLAUDE_CODE_PORT/);
+    assert.match(launchd, /<string>4109<\/string>/);
 
     const systemd = render("service-linux.mjs", "linux", testRoot);
     assert.match(systemd, /\[Service\]/);
     assert.match(systemd, /ExecStart=/);
     assert.match(systemd, /Environment="CODEX_ROUTER_STATE_DIR=/);
+    assert.match(systemd, /Environment="MODEL_ROUTER_CLAUDE_CODE_PORT=4109"/);
 
     const windows = render("service-windows.mjs", "win32", testRoot);
     assert.match(windows, /@echo off\r?\n/);
     assert.match(windows, /set "CODEX_ROUTER_STATE_DIR=/);
+    assert.match(windows, /set "MODEL_ROUTER_CLAUDE_CODE_PORT=4109"/);
     assert.match(windows, /litellm|start\.mjs/);
 
     const cursorLaunchd = render("service-macos.mjs", "darwin", testRoot, "cursor");
     assert.match(cursorLaunchd, /<string>io\.github\.codex-router\.cursor<\/string>/);
     assert.match(cursorLaunchd, /<string>cursor<\/string>/);
     assert.match(cursorLaunchd, /<string>4104<\/string>/);
+    assert.match(cursorLaunchd, /MODEL_ROUTER_CLAUDE_CODE_PORT/);
+    assert.match(cursorLaunchd, /<string>4117<\/string>/);
 
     const cursorSystemd = render("service-linux.mjs", "linux", testRoot, "cursor");
     assert.match(cursorSystemd, /Description=Cursor Router/);
     assert.match(cursorSystemd, /Environment="MODEL_ROUTER_TARGET=cursor"/);
     assert.match(cursorSystemd, /MODEL_ROUTER_PORT=4104/);
+    assert.match(cursorSystemd, /MODEL_ROUTER_CLAUDE_CODE_PORT=4117/);
 
     const cursorWindows = render("service-windows.mjs", "win32", testRoot, "cursor");
     assert.match(cursorWindows, /set "MODEL_ROUTER_TARGET=cursor"/);
     assert.match(cursorWindows, /set "MODEL_ROUTER_PORT=4104"/);
+    assert.match(cursorWindows, /set "MODEL_ROUTER_CLAUDE_CODE_PORT=4117"/);
   } finally {
     rmSync(testRoot, { recursive: true, force: true });
   }

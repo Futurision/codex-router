@@ -94,10 +94,24 @@ function port(name, fallback) {
 }
 
 // Each target owns a disjoint block. gateway/oauth/router/api are the original
-// four; grokOauth is a fifth forwarder port for the Grok OAuth provider.
+// four; provider-specific forwarders use additional ports in the same block.
 const TARGET_PORT_DEFAULTS = {
-  codex: { gateway: 4100, oauth: 4101, router: 4102, api: 4103, grokOauth: 4108 },
-  cursor: { gateway: 4105, oauth: 4106, router: 4104, api: 4107, grokOauth: 4116 },
+  codex: {
+    gateway: 4100,
+    oauth: 4101,
+    router: 4102,
+    api: 4103,
+    grokOauth: 4108,
+    claudeCode: 4109,
+  },
+  cursor: {
+    gateway: 4105,
+    oauth: 4106,
+    router: 4104,
+    api: 4107,
+    grokOauth: 4116,
+    claudeCode: 4117,
+  },
 };
 const targetPortDefaults = TARGET_PORT_DEFAULTS[TARGET];
 
@@ -131,6 +145,10 @@ export const PORTS = {
       targetPortDefaults.api,
   ),
   grokOauth: port("MODEL_ROUTER_GROK_OAUTH_PORT", targetPortDefaults.grokOauth),
+  claudeCode: port(
+    "MODEL_ROUTER_CLAUDE_CODE_PORT",
+    targetPortDefaults.claudeCode,
+  ),
 };
 
 export function loopback(portNumber, suffix = "") {

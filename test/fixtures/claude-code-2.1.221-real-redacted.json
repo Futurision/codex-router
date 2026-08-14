@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "provider": "Claude Code",
+  "provider_version": "2.1.221",
+  "captured_at": "2026-08-14T14:49:36.751Z",
+  "capture_scope": "isolated direct CLI plus isolated Claude bridge on loopback port 48109",
+  "redactions": [
+    "session_id",
+    "uuid",
+    "duration_ms",
+    "duration_api_ms",
+    "total_cost_usd",
+    "per-model costUSD",
+    "volatile generated tool-call ids"
+  ],
+  "native_cli_cases": [
+    {
+      "id": "opus_text_max",
+      "command_contract": {
+        "model": "claude-opus-5",
+        "effort": "max",
+        "tools_disabled": true,
+        "permission_mode": "dontAsk",
+        "safe_mode": true,
+        "output_format": "json",
+        "json_schema": true
+      },
+      "raw_redacted": {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "{\"text\":\"OPUS5_NATIVE_CAPTURE_OK\",\"tool_calls\":[]}",
+        "structured_output": {
+          "text": "OPUS5_NATIVE_CAPTURE_OK",
+          "tool_calls": []
+        },
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 4,
+          "cache_creation_input_tokens": 1570,
+          "cache_read_input_tokens": 1507,
+          "output_tokens": 187,
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "speed": "standard"
+        },
+        "modelUsage": {
+          "claude-opus-5": {
+            "inputTokens": 4,
+            "outputTokens": 187,
+            "cacheReadInputTokens": 1507,
+            "cacheCreationInputTokens": 1570,
+            "webSearchRequests": 0,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000,
+            "canonicalModel": "claude-opus-5",
+            "provider": "firstParty"
+          }
+        },
+        "permission_denials": [],
+        "session_id": "[redacted volatile session id]",
+        "uuid": "[redacted volatile id]"
+      }
+    },
+    {
+      "id": "fable_tool_max",
+      "command_contract": {
+        "model": "claude-fable-5",
+        "effort": "max",
+        "tools_disabled": true,
+        "permission_mode": "dontAsk",
+        "safe_mode": true,
+        "output_format": "json",
+        "json_schema": true
+      },
+      "raw_redacted": {
+        "type": "result",
+        "subtype": "success",
+        "is_error": false,
+        "result": "{\"text\":\"Requesting the add tool with a=7 and b=8.\",\"tool_calls\":[{\"name\":\"add\",\"arguments\":{\"a\":7,\"b\":8}}]}",
+        "structured_output": {
+          "text": "Requesting the add tool with a=7 and b=8.",
+          "tool_calls": [
+            {
+              "name": "add",
+              "arguments": {
+                "a": 7,
+                "b": 8
+              }
+            }
+          ]
+        },
+        "stop_reason": "tool_use",
+        "usage": {
+          "input_tokens": 1,
+          "cache_creation_input_tokens": 1619,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 270,
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "speed": "standard"
+        },
+        "modelUsage": {
+          "claude-fable-5": {
+            "inputTokens": 1,
+            "outputTokens": 270,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 1619,
+            "webSearchRequests": 0,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000,
+            "canonicalModel": "claude-fable-5",
+            "provider": "firstParty"
+          }
+        },
+        "permission_denials": [],
+        "session_id": "[redacted volatile session id]",
+        "uuid": "[redacted volatile id]"
+      }
+    }
+  ],
+  "isolated_bridge_observations": [
+    {
+      "id": "opus_text_max",
+      "status": 200,
+      "model": "claude-opus-5",
+      "finish_reason": "stop",
+      "content": "OPUS5_SUBSCRIPTION_BRIDGE_OK",
+      "tool_calls": []
+    },
+    {
+      "id": "fable_tool_and_result_max",
+      "status": 200,
+      "model": "claude-fable-5",
+      "tool_request": {
+        "finish_reason": "tool_calls",
+        "name": "add",
+        "arguments": {
+          "a": 19,
+          "b": 23
+        }
+      },
+      "tool_result_continuation": {
+        "finish_reason": "stop",
+        "content": "RESULT=42",
+        "tool_calls": []
+      }
+    },
+    {
+      "id": "opus_sse_tool_max",
+      "status": 200,
+      "model": "claude-opus-5",
+      "sse_done": true,
+      "finish_reason": "tool_calls",
+      "tool_delta": {
+        "index": 0,
+        "name": "inspect_status",
+        "arguments": {
+          "target": "main"
+        }
+      },
+      "evidence_scope": "bridge-synthesized SSE from a real terminal Claude result; not raw provider streaming"
+    },
+    {
+      "id": "isolated_responses_router",
+      "ports": "temporary high loopback ports; removed after capture",
+      "live_router_or_selection_touched": false,
+      "models": {
+        "claude-code/opus-5": {
+          "basic_response": "pass"
+        },
+        "claude-code/fable-5": {
+          "basic_response": "pass",
+          "streaming": "pass",
+          "tool_calling": "pass",
+          "compaction": "pass"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+model_list:
+  - model_name: "claude-code-opus-5"
+    litellm_params:
+      model: "openai/claude-opus-5"
+      api_base: "os.environ/CLAUDE_CODE_FORWARD_BASE_URL"
+      api_key: "os.environ/CODEX_ROUTER_INTERNAL_KEY"
+      use_chat_completions_api: true
+
+  - model_name: "claude-code-fable-5"
+    litellm_params:
+      model: "openai/claude-fable-5"
+      api_base: "os.environ/CLAUDE_CODE_FORWARD_BASE_URL"
+      api_key: "os.environ/CODEX_ROUTER_INTERNAL_KEY"
+      use_chat_completions_api: true
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 180
+
+general_settings:
+  disable_spend_logs: true

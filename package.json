@@ -9,6 +9,7 @@
   },
   "scripts": {
     "check": "node scripts-check.mjs",
+    "flightcheck": "node qa/flightcheck.mjs",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {

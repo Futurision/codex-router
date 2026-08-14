@@ -29,7 +29,7 @@ user.
 3. Never ask the user to paste OAuth tokens or API keys into chat, command
    arguments, logs, environment snippets, or tracked files.
 4. Determine which provider IDs the user requested: `anthropic-api`,
-   `kimi-oauth`, `kimi-api`, `deepseek`, `grok-api`, `qwen-plan`,
+   `claude-code`, `kimi-oauth`, `kimi-api`, `deepseek`, `grok-api`, `qwen-plan`,
    `zai-coding`, `ollama-cloud`, and/or `minimax-token-plan`. The
    catalog-only providers `groq`, `openrouter`, `together`, `fireworks`,
    `cerebras`, `mistral`, `nvidia-nim`, `siliconflow`, `huggingface`, and
@@ -38,8 +38,10 @@ user.
    interactive terminal to choose models. If they did not specify and
    credentials already exist, use
    `configured` rather than showing providers that cannot authenticate.
-5. For Kimi OAuth, reuse a valid `kimi login` session. If login is needed, run
-   the official CLI only in an interactive terminal. For API providers, invoke
+5. For Kimi OAuth, reuse a valid `kimi login` session. For Claude Code, reuse a
+   valid `claude auth login --claudeai` subscription session; never extract or
+   forward its OAuth token. If login is needed, run the official CLI only in an
+   interactive terminal. For API providers, invoke
    `bin/model-router codex provider-key PROVIDER set` in a PTY so the hidden
    prompt receives the value directly; do not relay it through chat.
 6. Run read-only legacy detection. It is safe to pass `--migrate-known` when the

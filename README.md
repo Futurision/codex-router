@@ -78,6 +78,8 @@ Linux installations support the Codex CLI and the Cursor target's local gateway.
 | DeepSeek V4 Pro (API) | `deepseek/deepseek-v4-pro` | DeepSeek API key |
 | Grok 4.5 (OAuth) | `grok-oauth/grok-4.5` | Official Grok CLI OAuth session |
 | Grok 4.5 (API) | `grok-api/grok-4.5` | Separately billed xAI API key |
+| Claude Opus 5 (Max) | `claude-code/opus-5` | Signed-in Claude Code subscription |
+| Claude Fable 5 (Max) | `claude-code/fable-5` | Signed-in Claude Code subscription |
 | Claude Opus 4.8 (API) | `anthropic-api/claude-opus-4.8` | Separately billed Anthropic API key |
 | GLM-5.2 (Ollama Cloud) | `ollama-cloud/glm-5.2` | Ollama Cloud API key |
 | Kimi K2.7 Code (Ollama Cloud) | `ollama-cloud/kimi-k2.7-code` | Ollama Cloud API key |
@@ -111,6 +113,13 @@ ChatGPT OAuth provider in the router.
 Kimi Code OAuth and Kimi Platform API access are separate authentication and
 billing systems. The two Kimi entries intentionally coexist. Older DeepSeek
 aliases remain hidden compatibility routes and are not advertised to new users.
+
+The Claude Code subscription route invokes the official `claude` CLI with its
+existing Claude.ai login. It never reads, copies, or forwards the OAuth token,
+and it strips unrelated router/provider secrets from the child environment.
+Claude Code's own tools, plugins, hooks, and project customizations are disabled:
+Claude returns a validated function-call envelope, while Codex remains the only
+tool executor and keeps permissions, MCP, files, and task state.
 
 
 
@@ -411,12 +420,16 @@ flowchart LR
   C["Codex Responses :4102"] --> L1["LiteLLM :4100"]
   U["Cursor Chat Completions :4104"] --> L2["LiteLLM :4105"]
   L1 --> K1["Kimi OAuth :4101"]
+  L1 --> C1["Claude Code subscription :4109"]
   L1 --> A1["API keys :4103"]
   L2 --> K2["Kimi OAuth :4106"]
+  L2 --> C2["Claude Code subscription :4117"]
   L2 --> A2["API keys :4107"]
   K1 --> P["External providers"]
+  C1 --> P
   A1 --> P
   K2 --> P
+  C2 --> P
   A2 --> P
 ```
 

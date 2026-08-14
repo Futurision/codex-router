@@ -11,6 +11,7 @@ import { detectLegacyInstallations } from "./legacy-migration.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
+import { claudeCodeStatus } from "./claude-code-status.mjs";
 import { waitForRouterHealth } from "./router-health.mjs";
 import {
   CALLER_SECRET_PATH,
@@ -267,6 +268,19 @@ add(
       ? grokOauth.source
       : `not configured; ${grokOauth.setup}`,
   !grokCli.runnable ? grokCli.fix : "Run grok login, then rerun the doctor.",
+);
+const claudeCode = claudeCodeStatus();
+add(
+  claudeCode.configured
+    ? "ok"
+    : selection.providers.includes("claude-code")
+      ? "fail"
+      : "warn",
+  "Claude Code subscription",
+  claudeCode.configured
+    ? `${claudeCode.subscriptionType || "Claude.ai"} subscription login`
+    : claudeCode.error || "not configured",
+  "Run claude auth login --claudeai, then rerun the doctor.",
 );
 
 for (const provider of PROVIDERS.values()) {

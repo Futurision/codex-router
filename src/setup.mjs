@@ -5,6 +5,7 @@ import path from "node:path";
 
 import { detectLegacyInstallations, applyKnownMigrations, rollbackLatestMigration } from "./legacy-migration.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
+import { claudeCodeStatus } from "./claude-code-status.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
 import { SOURCE_ROOT } from "./paths.mjs";
@@ -136,6 +137,7 @@ function providerConfigured(provider) {
   if (provider.kind === "oauth") {
     if (provider.id === "kimi-oauth") return kimiOAuthStatus().configured;
     if (provider.id === "grok-oauth") return grokOAuthStatus().configured;
+    if (provider.id === "claude-code") return claudeCodeStatus().configured;
     return false;
   }
   return credentialStatus(provider, { persistent: true }).configured;

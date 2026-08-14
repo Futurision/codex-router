@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "usage": {
+    "input_tokens": 7,
+    "cache_creation_input_tokens": 2,
+    "cache_read_input_tokens": 3,
+    "output_tokens": 5
+  },
+  "cases": [
+    {
+      "id": "tool-result-final",
+      "when": "tool_result",
+      "envelope": {
+        "text": "Final answer from tool result: 5",
+        "tool_calls": []
+      }
+    },
+    {
+      "id": "parallel-tools",
+      "marker": "__parallel_tools__",
+      "envelope": {
+        "text": "",
+        "tool_calls": [
+          { "name": "add", "arguments": { "a": 2, "b": 3 } },
+          { "name": "multiply", "arguments": { "a": 4, "b": 5 } }
+        ]
+      }
+    },
+    {
+      "id": "single-tool",
+      "marker": "__single_tool__",
+      "envelope": {
+        "text": "",
+        "tool_calls": [
+          { "name": "add", "arguments": { "a": 2, "b": 3 } }
+        ]
+      }
+    },
+    {
+      "id": "unknown-tool",
+      "marker": "__unknown_tool__",
+      "envelope": {
+        "text": "",
+        "tool_calls": [
+          { "name": "not_supplied", "arguments": {} }
+        ]
+      }
+    },
+    {
+      "id": "invalid-tool",
+      "marker": "__invalid_tool__",
+      "envelope": {
+        "text": "",
+        "tool_calls": [
+          { "name": "add", "arguments": [2, 3] }
+        ]
+      }
+    },
+    {
+      "id": "schema-invalid-tool",
+      "marker": "__schema_invalid_tool__",
+      "envelope": {
+        "text": "",
+        "tool_calls": [
+          { "name": "add", "arguments": { "a": "two", "b": 3 } }
+        ]
+      }
+    },
+    {
+      "id": "resume-second",
+      "marker": "__resume_second__",
+      "envelope": {
+        "text": "Second turn saw the first assistant reply.",
+        "tool_calls": []
+      }
+    },
+    {
+      "id": "resume-first",
+      "marker": "__resume_first__",
+      "envelope": {
+        "text": "First turn reply.",
+        "tool_calls": []
+      }
+    },
+    {
+      "id": "auth-exit",
+      "marker": "__auth_exit__",
+      "behavior": "exit",
+      "exit_code": 1,
+      "stderr": "OAuth login required"
+    },
+    {
+      "id": "generic-exit",
+      "marker": "__generic_exit__",
+      "behavior": "exit",
+      "exit_code": 7,
+      "stderr": "provider process failed"
+    },
+    {
+      "id": "provider-error",
+      "marker": "__provider_error__",
+      "result": {
+        "type": "result",
+        "subtype": "error",
+        "is_error": true,
+        "result": "inference failed"
+      }
+    },
+    {
+      "id": "malformed-output",
+      "marker": "__malformed_output__",
+      "stdout": "not-json"
+    },
+    {
+      "id": "slow",
+      "marker": "__slow_",
+      "behavior": "hang"
+    },
+    {
+      "id": "plain",
+      "default": true,
+      "envelope": {
+        "text": "Plain text reply.",
+        "tool_calls": []
+      }
+    }
+  ]
+}

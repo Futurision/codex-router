@@ -26,6 +26,7 @@ sequenceDiagram
   participant R as Router :4102
   participant L as LiteLLM :4100
   participant O as Kimi OAuth :4101
+  participant H as Claude Code :4109
   participant A as API forwarder :4103
   participant G as ChatGPT Codex
   participant P as External provider
@@ -42,6 +43,10 @@ sequenceDiagram
     alt Kimi Code OAuth
       L->>O: Chat request + internal key
       O->>P: Kimi model + refreshed OAuth bearer
+    else Claude Code subscription
+      L->>H: Chat request + internal key
+      H->>H: Official CLI, tools disabled
+      H->>P: Subscription-backed inference
     else API-key provider
       L->>A: Chat request + internal key
       A->>P: Upstream model + selected provider key
@@ -89,6 +94,8 @@ map, which restores native GPT routing.
 | DeepSeek V4 Pro | `deepseek/deepseek-v4-pro` | `deepseek-v4-pro` | `deepseek-v4-pro` |
 | Grok 4.5 OAuth | `grok-oauth/grok-4.5` | `grok-oauth-grok-4-5` | `grok-4.5` |
 | Grok 4.5 | `grok-api/grok-4.5` | `grok-api-grok-4-5` | `grok-4.5` |
+| Claude Opus 5 subscription | `claude-code/opus-5` | `claude-code-opus-5` | `claude-opus-5` |
+| Claude Fable 5 subscription | `claude-code/fable-5` | `claude-code-fable-5` | `claude-fable-5` |
 | Claude Opus 4.8 | `anthropic-api/claude-opus-4.8` | `anthropic-api-claude-opus-4-8` | `claude-opus-4-8` |
 | GLM-5.2 Ollama Cloud | `ollama-cloud/glm-5.2` | `ollama-cloud-glm-5-2` | `glm-5.2` |
 | Kimi K2.7 Code Ollama Cloud | `ollama-cloud/kimi-k2.7-code` | `ollama-cloud-kimi-k2-7-code` | `kimi-k2.7-code` |
@@ -136,6 +143,7 @@ and never grants CORS access.
 | --- | --- | --- |
 | Native GPT | Allow-listed and forwarded | Existing ChatGPT/Codex authentication |
 | Kimi OAuth | Discarded | Kimi CLI OAuth bearer from `~/.kimi-code` |
+| Claude Code subscription | Discarded | Existing official Claude Code login; token remains inside the CLI |
 | Kimi API | Discarded | Kimi Platform API key |
 | DeepSeek | Discarded | DeepSeek API key |
 
@@ -143,6 +151,14 @@ The Codex-to-router and internal-service trust boundaries use two different
 random keys, each stored with mode `600` or a current-user Windows ACL. Neither
 is a provider credential. Each external forwarder removes Codex account,
 installation, attestation, and private headers before sending a request upstream.
+
+The Claude Code bridge additionally removes unrelated provider and router
+secrets from the child environment. It starts the official CLI in safe mode
+with built-in tools and customizations disabled. System/developer roles and
+function definitions are carried in a private, mode-`600` prompt file; user,
+assistant, and tool-result messages remain lower-authority conversation data.
+Returned calls are checked against the exact Codex tool name and JSON schema,
+then Codex executes them through its normal permission and MCP machinery.
 
 ## Provider normalization
 

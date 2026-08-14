@@ -17,9 +17,15 @@ import {
 import { PROVIDERS } from "./model-registry.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
+import { claudeCodeStatus } from "./claude-code-status.mjs";
 import { SOURCE_ROOT } from "./paths.mjs";
 import { credentialStatus } from "./provider-credentials.mjs";
-import { providerOnboardingSnapshot } from "./provider-onboarding.mjs";
+import {
+  installOauthCli,
+  oauthCliPath,
+  oauthLoginArgs,
+  providerOnboardingSnapshot,
+} from "./provider-onboarding.mjs";
 import { configuredProviderIds, validateProviderIds } from "./provider-selection.mjs";
 import { renderProviderChoices, toggleSelection } from "./setup-ui.mjs";
 
@@ -120,6 +126,7 @@ export function providerConfigured(provider) {
   if (provider.kind === "oauth") {
     if (provider.id === "kimi-oauth") return kimiOAuthStatus().configured;
     if (provider.id === "grok-oauth") return grokOAuthStatus().configured;
+    if (provider.id === "claude-code") return claudeCodeStatus().configured;
     return false;
   }
   return credentialStatus(provider, { persistent: true }).configured;
@@ -127,9 +134,13 @@ export function providerConfigured(provider) {
 
 // Per-provider hint for a selected-but-unconfigured OAuth provider.
 function oauthSetupHint(provider) {
-  return provider.id === "grok-oauth"
-    ? "install the official Grok CLI and run `grok login --oauth`"
-    : `run \`kimi login\` (install the Kimi Code CLI from ${KIMI_CLI_INSTALL_URL} first if needed)`;
+  if (provider.id === "grok-oauth") {
+    return "install the official Grok CLI and run `grok login --oauth`";
+  }
+  if (provider.id === "claude-code") {
+    return "install the official Claude Code CLI and run `claude auth login --claudeai`";
+  }
+  return `run \`kimi login\` (install the Kimi Code CLI from ${KIMI_CLI_INSTALL_URL} first if needed)`;
 }
 
 function executable(name) {
@@ -182,7 +193,7 @@ function guidedSelection(appName) {
   if (selected.size === 0) selected = new Set([1]);
   process.stdout.write(`\nChoose the providers to show in ${appName}:\n`);
   process.stdout.write(
-    "OAuth entries reuse official Kimi or Grok CLI sessions; API entries use a provider key.\n",
+    "OAuth entries reuse official Kimi, Grok, or Claude Code CLI sessions; API entries use a provider key.\n",
   );
   for (;;) {
     process.stdout.write(`${renderProviderChoices(snapshots, selected, colorEnabled)}\n`);
@@ -275,6 +286,29 @@ function onboardGrokOauth() {
   throw new Error("Grok OAuth login did not produce a usable credential after several attempts.");
 }
 
+function onboardClaudeCode() {
+  let claude = oauthCliPath("claude-code");
+  if (!claude) {
+    if (!confirm("Install the official Claude Code CLI now?")) {
+      throw new Error(
+        "The official Claude Code CLI is required. Install `@anthropic-ai/claude-code`, then run setup again.",
+      );
+    }
+    installOauthCli("claude-code");
+    claude = oauthCliPath("claude-code");
+  }
+  if (!claude) throw new Error("Claude Code was installed but could not be located.");
+  for (let attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt += 1) {
+    if (!confirm("Run `claude auth login --claudeai` now?")) {
+      throw new Error("Claude Code subscription setup was cancelled.");
+    }
+    tryRun(claude, oauthLoginArgs("claude-code"));
+    if (claudeCodeStatus().configured) return;
+    process.stdout.write("Claude Code login did not produce a usable Claude.ai subscription yet.\n");
+  }
+  throw new Error("Claude Code login did not produce a usable subscription after several attempts.");
+}
+
 // Ensure a selected provider has a usable credential, onboarding it when guided.
 // providerKeyCommand(id) yields the target-specific hint for the non-guided path.
 export function configureProvider(provider, { guided, providerKeyCommand }) {
@@ -288,6 +322,7 @@ export function configureProvider(provider, { guided, providerKeyCommand }) {
   }
   if (provider.kind === "oauth") {
     if (provider.id === "grok-oauth") onboardGrokOauth();
+    else if (provider.id === "claude-code") onboardClaudeCode();
     else onboardKimiOauth();
   } else {
     if (!confirm(`Enter a ${provider.displayName} key securely now?`)) {

@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
+import { claudeCodeBinary } from "./claude-code-status.mjs";
 import {
   CODEX_HOME,
   LAUNCH_AGENT_PATH,
@@ -49,6 +50,7 @@ function environmentEntries() {
     MODEL_ROUTER_OAUTH_PORT: String(PORTS.oauth),
     MODEL_ROUTER_PORT: String(PORTS.router),
     MODEL_ROUTER_API_PORT: String(PORTS.api),
+    MODEL_ROUTER_CLAUDE_CODE_PORT: String(PORTS.claudeCode),
     CODEX_HOME,
     CODEX_ROUTER_STATE_DIR: STATE_DIR,
     KIMI_CODEX_STATE_DIR: STATE_DIR,
@@ -58,7 +60,19 @@ function environmentEntries() {
     CODEX_ROUTER_OAUTH_PORT: String(PORTS.oauth),
     CODEX_ROUTER_PORT: String(PORTS.router),
     CODEX_ROUTER_API_PORT: String(PORTS.api),
+    CODEX_ROUTER_CLAUDE_CODE_PORT: String(PORTS.claudeCode),
   };
+  const claudeBinary = claudeCodeBinary();
+  if (claudeBinary) values.CLAUDE_CODE_BIN = claudeBinary;
+  for (const key of [
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_CONFIG_DIR",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "MODEL_ROUTER_CLAUDE_CODE_CONCURRENCY",
+    "MODEL_ROUTER_CLAUDE_CODE_QUEUE_LIMIT",
+  ]) {
+    if (process.env[key]) values[key] = process.env[key];
+  }
   if (process.env.KIMI_CODE_HOME) values.KIMI_CODE_HOME = process.env.KIMI_CODE_HOME;
   return Object.entries(values)
     .map(([key, value]) => `    <key>${xml(key)}</key>\n    <string>${xml(value)}</string>`)

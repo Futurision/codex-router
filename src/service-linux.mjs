@@ -10,6 +10,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 
+import { claudeCodeBinary } from "./claude-code-status.mjs";
 import {
   CODEX_HOME,
   LOG_PATH,
@@ -55,6 +56,7 @@ function unit() {
     MODEL_ROUTER_OAUTH_PORT: String(PORTS.oauth),
     MODEL_ROUTER_PORT: String(PORTS.router),
     MODEL_ROUTER_API_PORT: String(PORTS.api),
+    MODEL_ROUTER_CLAUDE_CODE_PORT: String(PORTS.claudeCode),
     CODEX_HOME,
     CODEX_ROUTER_STATE_DIR: STATE_DIR,
     CODEX_ROUTER_QUIET: "1",
@@ -62,8 +64,20 @@ function unit() {
     CODEX_ROUTER_OAUTH_PORT: String(PORTS.oauth),
     CODEX_ROUTER_PORT: String(PORTS.router),
     CODEX_ROUTER_API_PORT: String(PORTS.api),
+    CODEX_ROUTER_CLAUDE_CODE_PORT: String(PORTS.claudeCode),
     ...(process.env.KIMI_CODE_HOME ? { KIMI_CODE_HOME: process.env.KIMI_CODE_HOME } : {}),
   };
+  const claudeBinary = claudeCodeBinary();
+  if (claudeBinary) environment.CLAUDE_CODE_BIN = claudeBinary;
+  for (const key of [
+    "CLAUDE_CONFIG_DIR",
+    "CLAUDE_CODE_CONFIG_DIR",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "MODEL_ROUTER_CLAUDE_CODE_CONCURRENCY",
+    "MODEL_ROUTER_CLAUDE_CODE_QUEUE_LIMIT",
+  ]) {
+    if (process.env[key]) environment[key] = process.env[key];
+  }
   return `[Unit]
 Description=${TARGET_DISPLAY_NAME}
 After=network-online.target

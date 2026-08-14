@@ -54,6 +54,9 @@ const GATEWAY_HEALTH =
   process.env.CODEX_ROUTER_GATEWAY_HEALTH_URL ||
   process.env.KIMI_GATEWAY_HEALTH_URL ||
   loopback(PORTS.gateway, "/health/liveliness");
+const CLAUDE_CODE_HEALTH =
+  process.env.CODEX_ROUTER_CLAUDE_CODE_HEALTH_URL ||
+  loopback(PORTS.claudeCode, "/health");
 const CATALOG_PATH =
   process.env.CODEX_ROUTER_CATALOG || process.env.KIMI_ROUTER_CATALOG || MERGED_CATALOG_PATH;
 const INTERNAL_KEY =
@@ -270,21 +273,27 @@ async function healthPayload() {
   const apiEnabled = [...PROVIDERS.values()].some(
     (provider) => enabled.has(provider.id) && provider.kind === "openai-compatible",
   );
-  const [oauth, api, gateway] = await Promise.all([
+  const [oauth, api, claudeCode, gateway] = await Promise.all([
     enabled.has("kimi-oauth")
       ? serviceHealth(OAUTH_HEALTH)
       : { reachable: true, enabled: false },
     apiEnabled ? serviceHealth(API_HEALTH) : { reachable: true, enabled: false },
+    enabled.has("claude-code")
+      ? serviceHealth(CLAUDE_CODE_HEALTH)
+      : { reachable: true, enabled: false },
     serviceHealth(GATEWAY_HEALTH),
   ]);
+  const claudeCodeReady = !enabled.has("claude-code") ||
+    (claudeCode.reachable && claudeCode.ready === true);
   return {
-    ok: oauth.reachable && api.reachable && gateway.reachable,
+    ok: oauth.reachable && api.reachable && claudeCodeReady && gateway.reachable,
     service: "codex-router",
     version: VERSION,
     router: "ready",
     activity: activityPayload(),
     oauth,
     api,
+    claude_code: claudeCode,
     gateway,
   };
 }

@@ -13,6 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 test("Grok tray sign-in explicitly starts the OAuth flow", () => {
   assert.deepEqual(oauthLoginArgs("grok-oauth"), ["login", "--oauth"]);
   assert.deepEqual(oauthLoginArgs("kimi-oauth"), ["login"]);
+  assert.deepEqual(oauthLoginArgs("claude-code"), ["auth", "login", "--claudeai"]);
 });
 
 function isolatedPath() {
@@ -35,6 +36,7 @@ function isolatedEnvironment(testRoot) {
     KIMI_CODE_HOME: path.join(testRoot, "kimi"),
     GROK_HOME: path.join(testRoot, "grok-home"),
     GROK_AUTH_PATH: path.join(testRoot, "grok", "auth.json"),
+    CLAUDE_CODE_BIN: path.join(testRoot, "missing-claude"),
     KIMI_API_KEY: "",
     MOONSHOT_API_KEY: "",
     DEEPSEEK_API_KEY: "",
@@ -59,6 +61,7 @@ test("provider onboarding reports install, login, and API key actions without se
 
     assert.equal(byId["kimi-oauth"].action, "install");
     assert.equal(byId["grok-oauth"].action, "install");
+    assert.equal(byId["claude-code"].action, "install");
     assert.equal(byId["kimi-api"].action, "add-key");
     assert.equal(byId["grok-api"].action, "add-key");
     assert.equal(byId["anthropic-api"].action, "add-key");

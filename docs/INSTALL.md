@@ -21,7 +21,7 @@ Required software:
 - Node.js 22.19+ (Node.js 24 LTS recommended)
 - `uv`, or Python 3.10+ with `venv`
 - Git for managed one-command installation and rollback
-- At least one Kimi OAuth, Kimi API, or DeepSeek API credential
+- At least one supported provider login or API credential
 
 The installer does not silently install a system package manager or runtime.
 When a prerequisite is missing, install it from its official source and rerun
@@ -118,6 +118,17 @@ The OAuth token remains in `~/.grok/auth.json` and is sent only to xAI's Grok
 CLI inference proxy. The separate `grok-api` provider continues to use a
 separately billed xAI API key.
 
+Claude Opus 5 and Fable 5 can reuse an official Claude Code subscription login:
+
+```sh
+claude auth login --claudeai
+./bin/model-router codex providers enable claude-code
+```
+
+The router invokes the official CLI and leaves authentication inside Claude
+Code. It does not extract a Desktop/Keychain token or turn the subscription into
+a generic Anthropic API credential. Codex remains the tool-loop owner.
+
 Windows:
 
 ```powershell
@@ -127,8 +138,9 @@ Windows:
 ./codex-router.ps1 provider-key anthropic-api set
 ```
 
-Kimi OAuth, Kimi Platform, DeepSeek, xAI, and Anthropic are separate account and billing
-systems. Never put a credential in chat, a command argument, shell history,
+Kimi OAuth, Kimi Platform, DeepSeek, xAI, Anthropic API, and Claude Code
+subscriptions are separate account and billing systems. Never put a credential
+in chat, a command argument, shell history,
 the provider registry, or a tracked file.
 
 Noninteractive setup can reuse already configured credentials:

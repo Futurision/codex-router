@@ -9,6 +9,10 @@
 - `src/router.mjs` dispatches native and namespaced external model IDs.
 - `src/oauth-forwarder.mjs` owns Kimi CLI OAuth loading and refresh.
 - `src/grok-oauth-forwarder.mjs` adapts Grok CLI OAuth to OpenAI-compatible chat.
+- `src/claude-code-forwarder.mjs` adapts the official Claude Code subscription
+  CLI while leaving all tool execution in Codex.
+- `src/claude-code-adapter.mjs` preserves role authority and validates the
+  structured text/tool envelope and tool arguments.
 - `src/api-forwarder.mjs` is shared by all API-key providers.
 - `src/provider-credentials.mjs` isolates environment, file, and Keychain lookup.
 - `src/rate-limit-headers.mjs` parses provider rate-limit headers into snapshots.
@@ -44,6 +48,11 @@ to add another provider using one of those protocols.
 OAuth schemes usually need a dedicated adapter because refresh and identity
 rules are provider-specific. Never infer that an API key can replace an OAuth
 credential or vice versa.
+
+For CLI-backed adapters, preserve captured native output separately from fake
+failure fixtures. A listed route needs isolated live proof for text, streaming,
+tool request, tool-result continuation, cancellation, and compaction; tests that
+use a fake executable prove only the local adapter contract.
 
 ## Registry rules
 

@@ -14,6 +14,7 @@ import { PROVIDER_SELECTION_PATH, STATE_DIR, TARGET } from "./paths.mjs";
 import { LISTED_MODELS, PROVIDERS } from "./model-registry.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
+import { claudeCodeStatus } from "./claude-code-status.mjs";
 import { credentialStatus } from "./provider-credentials.mjs";
 
 const RETIRED_PROVIDER_ALIASES = new Map([["chatgpt-oauth", "grok-oauth"]]);
@@ -44,6 +45,8 @@ export function configuredProviderIds() {
       if (provider.id === "kimi-oauth" && kimiOAuthStatus().configured) {
         configured.push(provider.id);
       } else if (provider.id === "grok-oauth" && grokOAuthStatus().configured) {
+        configured.push(provider.id);
+      } else if (provider.id === "claude-code" && claudeCodeStatus().configured) {
         configured.push(provider.id);
       }
     } else if (credentialStatus(provider, { persistent: true }).configured) {

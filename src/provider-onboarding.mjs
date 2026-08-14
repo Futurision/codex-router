@@ -9,6 +9,7 @@ import {
   grokCliPreflight,
 } from "./grok-cli.mjs";
 import { grokOAuthStatus } from "./grok-oauth-status.mjs";
+import { claudeCodeBinary, claudeCodeStatus } from "./claude-code-status.mjs";
 import { KIMI_CLI_NPM_PACKAGE } from "./kimi-oauth-onboarding.mjs";
 import { PROVIDERS } from "./model-registry.mjs";
 import { kimiOAuthStatus } from "./oauth-status.mjs";
@@ -25,6 +26,11 @@ const OAUTH_CLIS = Object.freeze({
     executable: "grok",
     npmPackage: "@xai-official/grok",
     loginArgs: ["login", "--oauth"],
+  },
+  "claude-code": {
+    executable: "claude",
+    npmPackage: "@anthropic-ai/claude-code",
+    loginArgs: ["auth", "login", "--claudeai"],
   },
 });
 
@@ -46,9 +52,10 @@ export function oauthCliPath(providerId) {
   const cli = OAUTH_CLIS[providerId];
   if (!cli) throw new Error(`Unknown OAuth provider: ${providerId}`);
   if (providerId === "grok-oauth") return grokCliPath();
+  if (providerId === "claude-code") return claudeCodeBinary();
   const discovered = commandPath(cli.executable);
   if (discovered) return discovered;
-  return cli.candidates.find((candidate) => existsSync(candidate));
+  return (cli.candidates || []).find((candidate) => existsSync(candidate));
 }
 
 export function oauthLoginArgs(providerId) {
@@ -60,6 +67,7 @@ export function oauthLoginArgs(providerId) {
 function oauthConfigured(providerId) {
   if (providerId === "kimi-oauth") return kimiOAuthStatus().configured;
   if (providerId === "grok-oauth") return grokOAuthStatus().configured;
+  if (providerId === "claude-code") return claudeCodeStatus().configured;
   return false;
 }
 
