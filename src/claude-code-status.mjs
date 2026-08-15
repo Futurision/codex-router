@@ -116,11 +116,20 @@ function readJson(command, args, options = {}) {
   return JSON.parse(output);
 }
 
+// The CLI is a Node program: a cold spawn costs ~300ms on an idle machine, and
+// this host routinely runs at load 10+ with parallel builds. A 1.5s budget has
+// no headroom there, and every expiry used to surface as a bogus 401.
+const DEFAULT_STATUS_PROBE_TIMEOUT_MS = 10_000;
+const STATUS_PROBE_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.MODEL_ROUTER_CLAUDE_CODE_STATUS_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_STATUS_PROBE_TIMEOUT_MS;
+})();
+
 function readJsonAsync(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     execFile(command, args, {
       encoding: "utf8",
-      timeout: options.timeout ?? 1_500,
+      timeout: options.timeout ?? STATUS_PROBE_TIMEOUT_MS,
       maxBuffer: options.maxBuffer ?? 1024 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
       env: claudeSubscriptionEnvironment(options.env),
@@ -144,6 +153,8 @@ function statusPayload(status, executable) {
   return {
     installed: true,
     configured,
+    // The CLI answered, so this verdict is authoritative either way.
+    determinate: true,
     authMethod,
     subscriptionType: subscriptionType || undefined,
     executable,
@@ -162,18 +173,26 @@ function unavailableStatus(executable, error) {
     return {
       installed: false,
       configured: false,
+      determinate: true,
       authMethod: "none",
       error: "Claude Code is not installed.",
     };
   }
+  // A missing binary is a definitive verdict. Anything else -- a spawn timeout
+  // under load, a killed child, unparseable output -- means the probe could not
+  // reach a verdict. Reporting that as "not signed in" turns a slow machine
+  // into a fake authentication failure, so callers must be able to tell the
+  // two apart and keep using their last known-good status.
+  const missing = error?.code === "ENOENT";
   return {
-    installed: error?.code !== "ENOENT",
+    installed: !missing,
     configured: false,
+    determinate: missing,
     authMethod: "none",
     executable,
-    error: error?.code === "ENOENT"
+    error: missing
       ? "Claude Code is not installed."
-      : "Claude Code subscription login is unavailable; run `claude auth login --claudeai`.",
+      : "Claude Code subscription status could not be determined; the CLI probe did not answer.",
   };
 }
 
@@ -220,7 +239,7 @@ export function claudeCodeVersionAsync(options = {}) {
   return new Promise((resolve) => {
     execFile(executable, ["--version"], {
       encoding: "utf8",
-      timeout: options.timeout ?? 1_500,
+      timeout: options.timeout ?? STATUS_PROBE_TIMEOUT_MS,
       maxBuffer: 64 * 1024,
       stdio: ["ignore", "pipe", "ignore"],
       env: claudeSubscriptionEnvironment(),

@@ -1,0 +1,64 @@
+#!/bin/sh
+# Activate the Claude Code subscription models in the live Codex router.
+#
+# Everything except the provider-selection flip is already staged. This script
+# performs the one step that cannot be done without a restart:
+#
+#   1. flip enabled-providers.json to include claude-code
+#   2. regenerate the picker catalog + LiteLLM routes
+#   3. reinstall/restart the router service (bootout -> plist -> bootstrap)
+#   4. verify router health, the Claude forwarder, and a real live tool call
+#
+# IMPORTANT ordering note (learned the hard way, 2026-08-15):
+# the running router resolves provider ids from the config/providers.json it
+# read at start. Adding "claude-code" to enabled-providers.json BEFORE the
+# restart makes the old process throw "Unknown provider: claude-code" inside
+# readProviderSelection(), which 502s /health and every routed (Kimi) request.
+# Native gpt-* models bypass that path, so the damage is partial but real.
+# Never flip the selection file without restarting the service right after.
+#
+# Rollback: ./bin/rollback-claude
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo_dir"
+state_dir="${CODEX_ROUTER_STATE_DIR:-$HOME/.codex/codex-router}"
+backup_dir="$state_dir/.pre-claude-activation-20260815"
+
+if [ ! -d "$backup_dir" ]; then
+  echo "Missing rollback backup at $backup_dir; refusing to activate." >&2
+  exit 1
+fi
+
+echo "==> 1/4 enabling claude-code provider"
+node src/provider-selection.mjs set kimi-oauth,claude-code
+
+echo "==> 2/4 regenerating picker catalog and LiteLLM routes"
+node src/catalog.mjs
+node src/litellm-config.mjs
+
+echo "==> 3/4 restarting the router service (this is the only downtime)"
+node src/service.mjs install
+
+echo "==> 4/4 verifying"
+./bin/status
+node --input-type=module -e '
+import { PORTS } from "./src/paths.mjs";
+const j = await (await fetch(`http://127.0.0.1:${PORTS.router}/health`)).json();
+if (!j.ok) { console.error("router health not ok:", JSON.stringify(j)); process.exit(1); }
+console.log("claude_code forwarder:", JSON.stringify(j.claude_code));
+'
+echo "--> live tool-call probe through the real installed router"
+./bin/test-model claude-code/opus-5 --live --yes --quick --json
+./bin/test-model claude-code/fable-5 --live --yes --json
+
+cat <<'EOF'
+
+Router side is live. The model picker itself is loaded once per app start, so
+the two entries appear only after Main and Wrapper B are reopened:
+
+  Claude Opus 5 (Max)    claude-code/opus-5
+  Claude Fable 5 (Max)   claude-code/fable-5
+
+Reopen them one at a time and confirm the picker plus one real tool call.
+EOF

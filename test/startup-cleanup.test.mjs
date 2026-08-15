@@ -33,9 +33,12 @@ async function portIsClosed(port) {
 }
 
 test("startup failure terminates services that already became healthy", { timeout: 20_000 }, async () => {
-  const ports = await Promise.all(Array.from({ length: 5 }, () => freePort()));
+  const ports = await Promise.all(Array.from({ length: 6 }, () => freePort()));
   assert.equal(new Set(ports).size, ports.length);
-  const [routerPort, gatewayPort, oauthPort, apiPort, grokOauthPort] = ports;
+  // Every forwarder needs an isolated port, including the Claude Code bridge.
+  // Leaving it on the default made this test collide with an installed router
+  // that is actually serving that lane.
+  const [routerPort, gatewayPort, oauthPort, apiPort, grokOauthPort, claudeCodePort] = ports;
   const rootDir = mkdtempSync(path.join(os.tmpdir(), "model-router-startup-cleanup-"));
   const stateDir = path.join(rootDir, "state");
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -53,6 +56,7 @@ test("startup failure terminates services that already became healthy", { timeou
       MODEL_ROUTER_OAUTH_PORT: String(oauthPort),
       MODEL_ROUTER_API_PORT: String(apiPort),
       MODEL_ROUTER_GROK_OAUTH_PORT: String(grokOauthPort),
+      MODEL_ROUTER_CLAUDE_CODE_PORT: String(claudeCodePort),
       MODEL_ROUTER_LITELLM_BIN: process.execPath,
     },
     stdio: ["ignore", "ignore", "pipe"],

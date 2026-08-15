@@ -49,8 +49,13 @@ const MAX_CLAUDE_ERROR_BYTES = 256 * 1024;
 const MAX_CONCURRENCY = 8;
 const MAX_QUEUE_LIMIT = 32;
 const activeClaudeRuns = new Set();
+// How long a verdict the CLI actually gave us stays usable when a later probe
+// cannot reach one. Long enough to ride out a loaded machine, short enough that
+// a real logout still surfaces promptly.
+const KNOWN_STATUS_GRACE_MS = 15 * 60 * 1000;
 let healthProbe;
 let healthSnapshot;
+let lastDeterminateStatus;
 
 if (!INTERNAL_KEY) throw new Error("MODEL_ROUTER_INTERNAL_KEY is required.");
 
@@ -378,7 +383,23 @@ async function currentHealthSnapshot() {
   healthProbe = Promise.all([
     claudeCodeStatusAsync(),
     claudeCodeVersionAsync(),
-  ]).then(([status, cliVersion]) => ({ status, cliVersion, checkedAt: Date.now() }));
+  ]).then(([status, cliVersion]) => {
+    // An indeterminate probe (spawn timeout, killed child, unparseable output)
+    // says nothing about the credential. Falling back to "not signed in" would
+    // reject a valid subscription and, worse, put the LiteLLM deployment into
+    // cooldown so the NEXT request fails as 429. Reuse the last verdict the CLI
+    // actually gave us while the login is still plausibly valid.
+    if (!status.determinate && lastDeterminateStatus &&
+        Date.now() - lastDeterminateStatus.at < KNOWN_STATUS_GRACE_MS) {
+      return {
+        status: { ...lastDeterminateStatus.status, stale: true, probeError: status.error },
+        cliVersion: cliVersion ?? lastDeterminateStatus.cliVersion,
+        checkedAt: Date.now(),
+      };
+    }
+    if (status.determinate) lastDeterminateStatus = { status, cliVersion, at: Date.now() };
+    return { status, cliVersion, checkedAt: Date.now() };
+  });
   try {
     healthSnapshot = await healthProbe;
     return healthSnapshot;
@@ -410,6 +431,9 @@ async function handleRequest(request, response) {
       auth_method: status.authMethod,
       subscription_type: status.subscriptionType,
       cli_version: cliVersion,
+      // Do not present a carried-over verdict as a fresh one.
+      status_stale: status.stale === true ? true : undefined,
+      status_probe_error: status.stale === true ? status.probeError : undefined,
       error: ready ? undefined : status.error,
       concurrency: concurrency.snapshot(),
     });
@@ -441,10 +465,22 @@ async function handleRequest(request, response) {
   const { status } = await currentHealthSnapshot();
   if (clientGone) return;
   if (!status.configured) {
-    writeJson(response, 401, {
+    // Only a verdict the CLI actually produced justifies an auth error. When
+    // the probe merely failed to answer, say so with a retryable 503 instead of
+    // accusing a valid subscription of being signed out.
+    if (status.determinate) {
+      writeJson(response, 401, {
+        error: {
+          type: "authentication_error",
+          message: "Claude Code is not signed into a Claude.ai subscription; run `claude auth login --claudeai`.",
+        },
+      });
+      return;
+    }
+    writeJson(response, 503, {
       error: {
-        type: "authentication_error",
-        message: "Claude Code is not signed into a Claude.ai subscription; run `claude auth login --claudeai`.",
+        type: "claude_code_bridge_error",
+        message: "Claude Code subscription status could not be determined; retry shortly.",
       },
     });
     return;

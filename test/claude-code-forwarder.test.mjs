@@ -122,6 +122,22 @@ function fakeClaudeProgram() {
     };
 
     if (args.join("\u0000") === ["auth", "status", "--json"].join("\u0000")) {
+      // Simulate a loaded machine: once the configured number of status probes
+      // has been answered, later probes hang past the caller's timeout.
+      if (config.statusStallAfterCalls !== undefined) {
+        let answered = 0;
+        try {
+          for (const line of readFileSync(logPath, "utf8").split("\n")) {
+            if (line.includes('"kind":"status"')) answered += 1;
+          }
+        } catch {
+          answered = 0;
+        }
+        if (answered >= config.statusStallAfterCalls) {
+          await new Promise((resolve) => setTimeout(resolve, config.statusStallMs || 5_000));
+          return;
+        }
+      }
       log({ kind: "status", args, ...environmentRecord });
       process.stdout.write(JSON.stringify({
         loggedIn: config.loggedIn !== false,
@@ -203,6 +219,8 @@ function createFakeClaude(directory, options = {}) {
     loggedIn: options.loggedIn,
     logPath: options.logPath || path.join(directory, "fake-claude.jsonl"),
     subscriptionType: options.subscriptionType,
+    statusStallAfterCalls: options.statusStallAfterCalls,
+    statusStallMs: options.statusStallMs,
   };
   const program = fakeClaudeProgram().toString();
   writeFileSync(
@@ -320,6 +338,8 @@ async function withForwarder(run, options = {}) {
     loggedIn: options.loggedIn,
     logPath,
     subscriptionType: options.subscriptionType,
+    statusStallAfterCalls: options.statusStallAfterCalls,
+    statusStallMs: options.statusStallMs,
   });
   const port = await openPort();
   const child = spawn(
@@ -339,6 +359,9 @@ async function withForwarder(run, options = {}) {
         ...(options.queueLimit === undefined
           ? {}
           : { MODEL_ROUTER_CLAUDE_CODE_QUEUE_LIMIT: String(options.queueLimit) }),
+        ...(options.statusTimeoutMs === undefined
+          ? {}
+          : { MODEL_ROUTER_CLAUDE_CODE_STATUS_TIMEOUT_MS: String(options.statusTimeoutMs) }),
         CLAUDE_CODE_BIN: executable,
         KEEP_ME: "must-not-reach-claude",
         KIMI_API_KEY: "must-not-reach-claude",
@@ -869,6 +892,7 @@ test(
         assert.deepEqual(claudeCodeStatus(), {
           installed: true,
           configured: true,
+          determinate: true,
           authMethod: "claude.ai",
           subscriptionType: "max",
           executable,
@@ -1601,4 +1625,87 @@ test(
       await Promise.allSettled([active, queued, replacement].filter(Boolean));
     }
   }, { concurrency: 1, queueLimit: 1 }),
+);
+
+test(
+  "an unanswered status probe is indeterminate, not a logged-out verdict",
+  () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "claude-code-indeterminate-"));
+    const logPath = path.join(directory, "fake-claude.jsonl");
+    const stalling = createFakeClaude(directory, {
+      logPath,
+      statusStallAfterCalls: 0,
+      statusStallMs: 5_000,
+    });
+    try {
+      withEnvironment(
+        {
+          CLAUDE_CODE_BIN: stalling,
+          MODEL_ROUTER_CLAUDE_CODE_STATUS_TIMEOUT_MS: undefined,
+        },
+        () => {
+          const status = claudeCodeStatus();
+          assert.equal(status.installed, true, "a stalled probe does not mean uninstalled");
+          assert.equal(status.configured, false);
+          assert.equal(status.determinate, false, "a timeout reaches no verdict");
+          assert.match(status.error, /could not be determined/);
+          assert.doesNotMatch(status.error, /not signed into/);
+        },
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "a missing CLI stays a determinate verdict",
+  () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "claude-code-missing-"));
+    try {
+      withEnvironment({ CLAUDE_CODE_BIN: path.join(directory, "absent") }, () => {
+        const status = claudeCodeStatus();
+        assert.equal(status.installed, false);
+        assert.equal(status.configured, false);
+        assert.equal(status.determinate, true, "absence is knowable");
+      });
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "the bridge keeps serving on a stalled probe instead of faking an auth failure",
+  async () => withForwarder(async ({ base, health }) => {
+    // The boot probe answered; every later probe now hangs past the timeout,
+    // which is exactly the loaded-machine case that used to emit a bogus 401
+    // and put the LiteLLM deployment into a 429 cooldown.
+    assert.equal(health.ready, true);
+    await new Promise((resolve) => setTimeout(resolve, 5_100));
+
+    const response = await postCompletion(base, {
+      model: "claude-opus-5",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    assert.equal(response.status, 200, "a valid subscription must not be rejected");
+
+    const stale = await (await fetch(`${base}/v1/health`, {
+      headers: { Authorization: `Bearer ${INTERNAL_KEY}` },
+    })).json();
+    assert.equal(stale.ready, true);
+    assert.equal(stale.status_stale, true, "health must admit the verdict is carried over");
+  }, { statusStallAfterCalls: 1, statusStallMs: 3_000, statusTimeoutMs: 300 }),
+);
+
+test(
+  "a genuine logout still fails closed with 401",
+  async () => withForwarder(async ({ base }) => {
+    const response = await postCompletion(base, {
+      model: "claude-opus-5",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    assert.equal(response.status, 401);
+    assert.equal((await response.json()).error.type, "authentication_error");
+  }, { loggedIn: false }),
 );

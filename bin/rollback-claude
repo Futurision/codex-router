@@ -1,0 +1,30 @@
+#!/bin/sh
+# Undo the Claude Code activation and return the router to its pre-2026-08-15 state.
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo_dir"
+state_dir="${CODEX_ROUTER_STATE_DIR:-$HOME/.codex/codex-router}"
+backup_dir="$state_dir/.pre-claude-activation-20260815"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+
+if [ ! -d "$backup_dir" ]; then
+  echo "No backup at $backup_dir; nothing to roll back." >&2
+  exit 1
+fi
+
+echo "==> restoring router state files"
+cp -p "$backup_dir/enabled-providers.json" "$state_dir/enabled-providers.json"
+cp -p "$backup_dir/merged-models.json" "$state_dir/merged-models.json"
+cp -p "$backup_dir/litellm.yaml" "$state_dir/litellm.yaml"
+cp -p "$backup_dir/native-aliases.json" "$state_dir/native-aliases.json"
+
+echo "==> restoring routed agent definitions"
+rm -f "$codex_home"/agents/router-model-claude-code-*.toml
+cp -p "$backup_dir"/agents/*.toml "$codex_home/agents/" 2>/dev/null || true
+
+echo "==> restarting the router service on the restored config"
+node src/service.mjs install
+
+./bin/status
+echo "Rolled back. Reopen Main and Wrapper B to drop the picker entries."
