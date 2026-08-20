@@ -63,6 +63,12 @@ export function copyResponseHeaders(upstream, response, denylist = HOP_BY_HOP_HE
   }
 }
 
+export const STALL_TIMEOUT_MS = Number(
+  process.env.MODEL_ROUTER_STALL_MS ||
+    process.env.CODEX_ROUTER_STALL_MS ||
+    300_000,
+);
+
 export async function pipeResponse(upstream, response, denylist, transform) {
   response.statusCode = upstream.status;
   copyResponseHeaders(upstream, response, denylist);
@@ -72,10 +78,47 @@ export async function pipeResponse(upstream, response, denylist, transform) {
   }
   await new Promise((resolve, reject) => {
     const stream = Readable.fromWeb(upstream.body);
-    stream.once("error", reject);
-    if (transform) transform.once("error", reject);
-    response.once("finish", resolve);
-    response.once("error", reject);
+    // Progress watchdog: SSE upstreams (chatgpt.com) keep dead turns alive
+    // with ping comments, so a byte-gap timer never fires. Real model events
+    // always contain "response." — a stream delivering nothing but pings for
+    // STALL_TIMEOUT_MS is stalled and must fail so the client can retry
+    // instead of showing "thinking" forever.
+    let stallTimer = null;
+    const disarm = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer);
+        stallTimer = null;
+      }
+    };
+    const arm = () => {
+      if (!(STALL_TIMEOUT_MS > 0)) return;
+      disarm();
+      stallTimer = setTimeout(() => {
+        const error = new Error(
+          `Upstream stream stalled: no model events for ${STALL_TIMEOUT_MS}ms.`,
+        );
+        error.status = 504;
+        stream.destroy(error);
+      }, STALL_TIMEOUT_MS);
+      stallTimer.unref?.();
+    };
+    const settle = (fn) => (arg) => {
+      disarm();
+      fn(arg);
+    };
+    const isSse = (upstream.headers.get("content-type") || "").includes(
+      "text/event-stream",
+    );
+    arm();
+    stream.on("data", (chunk) => {
+      // SSE: only real model events count as progress (pings are comments).
+      // Other bodies: any byte is progress.
+      if (!isSse || chunk.includes("response.")) arm();
+    });
+    stream.once("error", settle(reject));
+    if (transform) transform.once("error", settle(reject));
+    response.once("finish", settle(resolve));
+    response.once("error", settle(reject));
     if (transform) stream.pipe(transform).pipe(response);
     else stream.pipe(response);
   });

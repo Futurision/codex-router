@@ -1087,7 +1087,9 @@ async function handleRequest(request, response) {
 const server = http.createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
     const status = httpErrorStatus(error);
-    console.error("[codex-router] request failed");
+    console.error(
+      `[codex-router] request failed: ${error?.message || error}`,
+    );
     if (!response.headersSent) {
       writeJson(response, status, {
         error: {
