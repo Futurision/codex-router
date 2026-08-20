@@ -812,6 +812,8 @@ function requireCodexTransport(request, response) {
 }
 
 const UPSTREAM_TTFB_MS = Number(process.env.CODEX_ROUTER_TTFB_MS || 180_000);
+const CLAUDE_FAILOVER_SLUG =
+  process.env.CODEX_ROUTER_CLAUDE_FAILOVER ?? "kimi-oauth/k3-1m";
 
 // Upstream calls to chatgpt.com fail transiently at the network layer
 // ("fetch failed": socket resets, TLS alerts from the flapping v6 route) or
@@ -856,9 +858,24 @@ async function handleResponses(request, response, requestUrl) {
     const registeredRoute =
       MODEL_BY_SLUG.get(requestedModel) ??
       MODEL_BY_SLUG.get(readNativeAliases()[requestedModel]);
-    const route = registeredRoute && readProviderSelection().includes(registeredRoute.provider)
+    let route = registeredRoute && readProviderSelection().includes(registeredRoute.provider)
       ? registeredRoute
       : undefined;
+    // The claude-code CLI on this machine is logged out, so every request
+    // routed to it dies as a 502 ("Claude Code exited before completing").
+    // Codex runs auxiliary work (e.g. remote compaction) on such secondary
+    // models, so a dead claude-code backend breaks even GPT threads. Fail
+    // over to a working provider until `claude /login` restores it.
+    // CODEX_ROUTER_CLAUDE_FAILOVER overrides the target; "off" disables.
+    if (route?.provider === "claude-code" && CLAUDE_FAILOVER_SLUG !== "off") {
+      const fallback = MODEL_BY_SLUG.get(CLAUDE_FAILOVER_SLUG);
+      if (fallback && readProviderSelection().includes(fallback.provider)) {
+        console.error(
+          `[codex-router] claude-code backend unavailable; failing over ${route.slug} -> ${fallback.slug}`,
+        );
+        route = fallback;
+      }
+    }
     if (registeredRoute && !route) {
       writeJson(response, 409, {
         error: {
