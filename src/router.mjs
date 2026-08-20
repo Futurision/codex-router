@@ -925,6 +925,32 @@ async function handleResponses(request, response, requestUrl) {
   }
 }
 
+async function handleNativePassthrough(request, response, requestUrl) {
+  // Generic pass-through for native-only endpoints the app expects on the
+  // configured base URL (e.g. /v1/alpha/search for the webrun tool).
+  // The router must forward them to the ChatGPT backend instead of 404ing.
+  if (!requireCodexTransport(request, response)) return;
+  const encoded = await readRequestBody(request);
+  const body = decodeBody(encoded, request.headers["content-encoding"]);
+  const controller = new AbortController();
+  request.once("aborted", () => controller.abort());
+  response.once("close", () => {
+    if (!response.writableEnded) controller.abort();
+  });
+  const upstream = await fetch(nativeTarget(requestUrl.pathname, requestUrl.search), {
+    method: request.method,
+    headers: nativeHeaders(request),
+    body: body.length ? body : undefined,
+    signal: controller.signal,
+  });
+  const headers = {};
+  const contentType = upstream.headers.get("content-type");
+  if (contentType) headers["content-type"] = contentType;
+  response.writeHead(upstream.status, headers);
+  const buf = Buffer.from(await upstream.arrayBuffer());
+  response.end(buf);
+}
+
 async function handleNativeImage(request, response, requestUrl) {
   const startedAt = Date.now();
   const activity = beginRequestActivity();
@@ -1034,6 +1060,13 @@ async function handleRequest(request, response) {
   }
   if (
     request.method === "POST" &&
+    ["/alpha/search", "/v1/alpha/search"].includes(requestUrl.pathname)
+  ) {
+    await handleNativePassthrough(request, response, requestUrl);
+    return;
+  }
+  if (
+    request.method === "POST" &&
     ["/responses", "/v1/responses", "/responses/compact", "/v1/responses/compact"].includes(
       requestUrl.pathname,
     )
@@ -1045,6 +1078,7 @@ async function handleRequest(request, response) {
     await handleNativeImage(request, response, requestUrl);
     return;
   }
+  console.error(`[codex-router] 404 ${request.method} ${requestUrl.pathname}`);
   writeJson(response, 404, {
     error: { type: "proxy_route_not_found", message: "Unsupported router route." },
   });
