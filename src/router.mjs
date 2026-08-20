@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import http from "node:http";
+import { setDefaultResultOrder } from "node:dns";
 import { randomUUID } from "node:crypto";
+
+// This machine's IPv6 route to chatgpt.com flaps (TLS alerts, hung
+// sockets). Prefer IPv4 for every upstream connection; undici's happy
+// eyeballs can still fall back to v6 quickly when v4 fails.
+setDefaultResultOrder("ipv4first");
 import {
   brotliDecompressSync,
   gunzipSync,
@@ -805,6 +811,38 @@ function requireCodexTransport(request, response) {
   return true;
 }
 
+const UPSTREAM_TTFB_MS = Number(process.env.CODEX_ROUTER_TTFB_MS || 180_000);
+
+// Upstream calls to chatgpt.com fail transiently at the network layer
+// ("fetch failed": socket resets, TLS alerts from the flapping v6 route) or
+// hang before the first response header, which used to park a GUI turn in
+// "thinking" forever. Bound the time to first byte and retry once; both are
+// safe because the request never produced a partial response at that point.
+async function fetchUpstream(target, headers, body, clientSignal) {
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const ttfb = AbortSignal.timeout(UPSTREAM_TTFB_MS);
+    try {
+      return await fetch(target, {
+        method: "POST",
+        headers,
+        body,
+        signal: AbortSignal.any([clientSignal, ttfb]),
+      });
+    } catch (error) {
+      lastError = error;
+      if (clientSignal.aborted) throw error; // client walked away: never retry
+      if (attempt === 0) {
+        console.error(
+          `[codex-router] upstream attempt failed: ${error?.message || error}; retrying once`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function handleResponses(request, response, requestUrl) {
   const startedAt = Date.now();
   const activity = beginRequestActivity();
@@ -888,12 +926,12 @@ async function handleResponses(request, response, requestUrl) {
       routedBody = Buffer.from(JSON.stringify(native), "utf8");
     }
 
-    const upstream = await fetch(target, {
-      method: "POST",
+    const upstream = await fetchUpstream(
+      target,
       headers,
-      body: routedBody,
-      signal: controller.signal,
-    });
+      routedBody,
+      controller.signal,
+    );
     const usageTransform = route
       ? new ResponseUsageTransform(upstream.headers.get("content-type") || "")
       : undefined;
