@@ -823,15 +823,30 @@ const CLAUDE_FAILOVER_SLUG =
 async function fetchUpstream(target, headers, body, clientSignal) {
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const ttfb = AbortSignal.timeout(UPSTREAM_TTFB_MS);
+    // AbortSignal.timeout() stays armed for the lifetime of the fetch, which
+    // includes consuming a streaming response body.  Using it here therefore
+    // turned a time-to-first-byte limit into a hard whole-stream limit: every
+    // healthy response lasting longer than UPSTREAM_TTFB_MS was truncated.
+    // Keep the client-abort signal for the full stream, but disarm the TTFB
+    // controller as soon as fetch() resolves with the upstream headers.
+    const ttfbController = new AbortController();
+    const ttfbTimer = setTimeout(() => {
+      ttfbController.abort(
+        new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+      );
+    }, UPSTREAM_TTFB_MS);
+    ttfbTimer.unref?.();
     try {
-      return await fetch(target, {
+      const upstream = await fetch(target, {
         method: "POST",
         headers,
         body,
-        signal: AbortSignal.any([clientSignal, ttfb]),
+        signal: AbortSignal.any([clientSignal, ttfbController.signal]),
       });
+      clearTimeout(ttfbTimer);
+      return upstream;
     } catch (error) {
+      clearTimeout(ttfbTimer);
       lastError = error;
       if (clientSignal.aborted) throw error; // client walked away: never retry
       if (attempt === 0) {

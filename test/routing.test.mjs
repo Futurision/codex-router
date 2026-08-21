@@ -613,6 +613,43 @@ test("router preserves native auth and isolates every external route", async () 
   }
 });
 
+test("router TTFB timeout is disarmed after streaming headers arrive", async () => {
+  const native = await mockServer(async (request, response) => {
+    await bodyJson(request);
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.flushHeaders();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    response.end('data: {"type":"response.completed"}\n\n');
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_TTFB_MS: "50",
+    CODEX_ROUTER_QUIET: "1",
+  });
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const response = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer CODEX_CALLER_SECRET",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ model: "gpt-5.6-sol", input: "stream past TTFB" }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(
+      await response.text(),
+      'data: {"type":"response.completed"}\n\n',
+    );
+  } finally {
+    await stopChild(router);
+    await closeServer(native.server);
+  }
+});
+
 test("router sends standalone image requests only to the native OpenAI backend", async () => {
   const nativeRequests = [];
   const native = await mockServer(async (request, response) => {
