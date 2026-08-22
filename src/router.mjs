@@ -21,7 +21,7 @@ import {
 import {
   HOP_BY_HOP_HEADERS,
   httpErrorStatus,
-  MAX_BODY_BYTES,
+  MAX_DECODED_BODY_BYTES,
   pipeResponse,
   readRequestBody,
   writeJson,
@@ -195,7 +195,7 @@ function decodeBody(body, contentEncoding) {
   let decoded = body;
   try {
     for (const encoding of encodings) {
-      const options = { maxOutputLength: MAX_BODY_BYTES };
+      const options = { maxOutputLength: MAX_DECODED_BODY_BYTES };
       if (encoding === "zstd") decoded = zstdDecompressSync(decoded, options);
       else if (encoding === "gzip" || encoding === "x-gzip") {
         decoded = gunzipSync(decoded, options);
@@ -212,10 +212,14 @@ function decodeBody(body, contentEncoding) {
     const wrapped = new Error(
       `Unable to decompress request body: ${error instanceof Error ? error.message : String(error)}`,
     );
-    wrapped.status = 400;
+    wrapped.status =
+      error?.code === "ERR_BUFFER_TOO_LARGE" ||
+      /larger than|output length|too large/i.test(String(error?.message || ""))
+        ? 413
+        : 400;
     throw wrapped;
   }
-  if (decoded.length > MAX_BODY_BYTES) {
+  if (decoded.length > MAX_DECODED_BODY_BYTES) {
     const error = new Error("Decoded request body is too large.");
     error.status = 413;
     throw error;

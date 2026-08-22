@@ -11,6 +11,21 @@ export const MAX_BODY_BYTES = Number(
     64 * 1024 * 1024,
 );
 
+// Codex compresses large Responses payloads before sending them to the local
+// router. Keep the on-the-wire cap tight, but allow the authenticated loopback
+// request to expand far enough to carry image-rich native histories. Using the
+// same 64 MiB limit for both made a valid 44 MiB zstd request fail only because
+// its decoded JSON was 76 MiB. The separate decoded ceiling still bounds
+// decompression and JSON parsing, including compression-bomb inputs.
+export const MAX_DECODED_BODY_BYTES = Number(
+  process.env.MODEL_ROUTER_MAX_DECODED_BODY_BYTES ||
+    (TARGET === "codex"
+      ? process.env.CODEX_ROUTER_MAX_DECODED_BODY_BYTES ||
+        process.env.KIMI_PROXY_MAX_DECODED_BODY_BYTES
+      : undefined) ||
+    128 * 1024 * 1024,
+);
+
 export const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "content-encoding",

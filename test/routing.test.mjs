@@ -613,6 +613,53 @@ test("router preserves native auth and isolates every external route", async () 
   }
 });
 
+test("router bounds compressed input separately from decoded Codex history", async () => {
+  const nativeRequests = [];
+  const native = await mockServer(async (request, response) => {
+    nativeRequests.push(await bodyJson(request));
+    json(response, 200, { route: "native" });
+  });
+  const routerPort = await openPort();
+  const router = run("router.mjs", {
+    CODEX_ROUTER_PORT: String(routerPort),
+    CODEX_NATIVE_BASE_URL: `http://127.0.0.1:${native.port}/backend-api/codex`,
+    CODEX_ROUTER_MAX_BODY_BYTES: "1024",
+    CODEX_ROUTER_MAX_DECODED_BODY_BYTES: "4096",
+    CODEX_ROUTER_QUIET: "1",
+  });
+
+  try {
+    await waitFor(`${routerBase(routerPort)}/models`, router);
+    const headers = {
+      Authorization: "Bearer CODEX_CALLER_SECRET",
+      "Content-Type": "application/json",
+      "Content-Encoding": "zstd",
+    };
+    const accepted = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: zstdCompressSync(
+        Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "x".repeat(2048) })),
+      ),
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(nativeRequests[0].input.length, 2048);
+
+    const rejected = await fetch(`${routerBase(routerPort)}/responses`, {
+      method: "POST",
+      headers,
+      body: zstdCompressSync(
+        Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", input: "x".repeat(5000) })),
+      ),
+    });
+    assert.equal(rejected.status, 413);
+    assert.equal(nativeRequests.length, 1);
+  } finally {
+    await stopChild(router);
+    await closeServer(native.server);
+  }
+});
+
 test("router TTFB timeout is disarmed after streaming headers arrive", async () => {
   const native = await mockServer(async (request, response) => {
     await bodyJson(request);
