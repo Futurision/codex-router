@@ -953,6 +953,10 @@ async function handleResponses(request, response, requestUrl) {
       routedBody = Buffer.from(JSON.stringify(routed), "utf8");
     } else {
       const native = { ...payload };
+      // The ChatGPT subscription backend does not accept the public Responses
+      // API retention override for every native Codex model. Omitting only the
+      // override preserves normal prompt caching while avoiding a hard 400.
+      delete native.prompt_cache_retention;
       if (Array.isArray(payload.input)) {
         native.input = normalizeNativeInput(payload.input);
       }

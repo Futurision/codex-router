@@ -569,6 +569,8 @@ test("router preserves native auth and isolates every external route", async () 
         JSON.stringify({
           model: "gpt-5.6-sol",
           input: "native test",
+          prompt_cache_key: "keep-native-cache-key",
+          prompt_cache_retention: "24h",
           previous_response_id: "remove-me",
         }),
       ),
@@ -601,6 +603,8 @@ test("router preserves native auth and isolates every external route", async () 
     assert.equal(nativeRequests[0].headers["chatgpt-account-id"], "account-secret");
     assert.equal(nativeRequests[0].headers["x-private-header"], undefined);
     assert.equal(nativeRequests[0].body.previous_response_id, undefined);
+    assert.equal(nativeRequests[0].body.prompt_cache_key, "keep-native-cache-key");
+    assert.equal(nativeRequests[0].body.prompt_cache_retention, undefined);
     for (const request of routedRequests) {
       assert.equal(request.headers.authorization, `Bearer ${INTERNAL_KEY}`);
       assert.equal(request.headers["chatgpt-account-id"], undefined);
