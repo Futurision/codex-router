@@ -24,6 +24,7 @@ import {
   MAX_DECODED_BODY_BYTES,
   pipeResponse,
   readRequestBody,
+  readResponseBody,
   writeJson,
 } from "./http-utils.mjs";
 import { MERGED_CATALOG_PATH, PORTS, loopback } from "./paths.mjs";
@@ -136,6 +137,35 @@ function beginRequestActivity() {
       finished = true;
       activeRequests.delete(requestId);
       if (status >= 400) errorStatusUntil = Date.now() + ERROR_STATUS_DURATION_MS;
+    },
+  };
+}
+
+function bindClientAbort(request, response, onCancel) {
+  const controller = new AbortController();
+  let clientGone = false;
+  const cancel = () => {
+    if (clientGone) return;
+    clientGone = true;
+    onCancel?.();
+    controller.abort(
+      new DOMException("The downstream client disconnected.", "AbortError"),
+    );
+  };
+  const responseClosed = () => {
+    if (!response.writableEnded) cancel();
+  };
+  request.once("aborted", cancel);
+  response.once("close", responseClosed);
+  response.once("error", cancel);
+  if (request.aborted || request.destroyed || response.destroyed) cancel();
+  return {
+    signal: controller.signal,
+    clientGone: () => clientGone,
+    cleanup() {
+      request.removeListener("aborted", cancel);
+      response.removeListener("close", responseClosed);
+      response.removeListener("error", cancel);
     },
   };
 }
@@ -648,16 +678,14 @@ async function summarize(payload, route, signal) {
     ],
   };
   delete body.previous_response_id;
-  const upstream = await fetch(`${GATEWAY_BASE}/responses`, {
-    method: "POST",
-    headers: routedHeaders(),
-    body: JSON.stringify(body),
+  const upstream = await fetchUpstream(
+    `${GATEWAY_BASE}/responses`,
+    routedHeaders(),
+    JSON.stringify(body),
     signal,
-  });
-  const bytes = Buffer.from(await upstream.arrayBuffer());
-  if (bytes.length > 32 * 1024 * 1024) {
-    return { ok: false, status: 502, payload: { error: { message: "Compact response is too large." } } };
-  }
+    { attempts: 1 },
+  );
+  const bytes = await readResponseBody(upstream);
   const parsed = JSON.parse(bytes.toString("utf8"));
   if (!upstream.ok) return { ok: false, status: upstream.status, payload: parsed };
   return { ok: true, summary: extractResponseText(parsed), input: originalInput };
@@ -718,13 +746,14 @@ async function handleNativeCompaction(response, payload, request, signal) {
     ],
   };
   delete body.previous_response_id;
-  const upstream = await fetch(nativeTarget("/responses", ""), {
-    method: "POST",
-    headers: nativeHeaders(request),
-    body: JSON.stringify(body),
+  const upstream = await fetchUpstream(
+    nativeTarget("/responses", ""),
+    nativeHeaders(request),
+    JSON.stringify(body),
     signal,
-  });
-  const bytes = Buffer.from(await upstream.arrayBuffer());
+    { attempts: 1 },
+  );
+  const bytes = await readResponseBody(upstream);
   const rawText = bytes.toString("utf8");
   if (!upstream.ok) {
     let errPayload;
@@ -817,16 +846,56 @@ function requireCodexTransport(request, response) {
 
 const UPSTREAM_TTFB_MS = Number(process.env.CODEX_ROUTER_TTFB_MS || 180_000);
 const CLAUDE_FAILOVER_SLUG =
-  process.env.CODEX_ROUTER_CLAUDE_FAILOVER ?? "kimi-oauth/k3-1m";
+  process.env.CODEX_ROUTER_CLAUDE_FAILOVER ?? "off";
+
+function diagnosticToken(value) {
+  const token = typeof value === "string" ? value : String(value || "");
+  return /^[A-Za-z0-9_.-]{1,80}$/.test(token) ? token : undefined;
+}
+
+function errorDiagnostic(error) {
+  return [
+    diagnosticToken(error?.name),
+    diagnosticToken(error?.code),
+    diagnosticToken(error?.cause?.name),
+    diagnosticToken(error?.cause?.code),
+  ].filter(Boolean).join("/") || "unknown_error";
+}
+
+function retryPause(signal) {
+  const delayMs = 500 + Math.floor(Math.random() * 501);
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", aborted);
+      resolve();
+    }, delayMs);
+    timer.unref?.();
+    const aborted = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
 
 // Upstream calls to chatgpt.com fail transiently at the network layer
 // ("fetch failed": socket resets, TLS alerts from the flapping v6 route) or
 // hang before the first response header, which used to park a GUI turn in
 // "thinking" forever. Bound the time to first byte and retry once; both are
 // safe because the request never produced a partial response at that point.
-async function fetchUpstream(target, headers, body, clientSignal) {
+async function fetchUpstream(
+  target,
+  headers,
+  body,
+  clientSignal,
+  { attempts = 2 } = {},
+) {
   let lastError;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     // AbortSignal.timeout() stays armed for the lifetime of the fetch, which
     // includes consuming a streaming response body.  Using it here therefore
     // turned a time-to-first-byte limit into a hard whole-stream limit: every
@@ -853,11 +922,11 @@ async function fetchUpstream(target, headers, body, clientSignal) {
       clearTimeout(ttfbTimer);
       lastError = error;
       if (clientSignal.aborted) throw error; // client walked away: never retry
-      if (attempt === 0) {
+      if (attempt + 1 < attempts) {
         console.error(
-          `[codex-router] upstream attempt failed: ${error?.message || error}; retrying once`,
+          `[codex-router] upstream attempt failed: ${errorDiagnostic(error)}; retrying once`,
         );
-        await new Promise((resolve) => setTimeout(resolve, 750));
+        await retryPause(clientSignal);
       }
     }
   }
@@ -867,10 +936,12 @@ async function fetchUpstream(target, headers, body, clientSignal) {
 async function handleResponses(request, response, requestUrl) {
   const startedAt = Date.now();
   const activity = beginRequestActivity();
-  let clientGone = false;
+  const client = bindClientAbort(request, response, () => activity.finish(0));
   try {
+    if (client.clientGone()) return;
     if (!requireCodexTransport(request, response)) return;
     const encoded = await readRequestBody(request);
+    if (client.clientGone()) return;
     const body = decodeBody(encoded, request.headers["content-encoding"]);
     const payload = parseBody(body);
     const requestedModel = typeof payload.model === "string" ? payload.model : "";
@@ -880,15 +951,18 @@ async function handleResponses(request, response, requestUrl) {
     let route = registeredRoute && readProviderSelection().includes(registeredRoute.provider)
       ? registeredRoute
       : undefined;
-    // The claude-code CLI on this machine is logged out, so every request
-    // routed to it dies as a 502 ("Claude Code exited before completing").
-    // Codex runs auxiliary work (e.g. remote compaction) on such secondary
-    // models, so a dead claude-code backend breaks even GPT threads. Fail
-    // over to a working provider until `claude /login` restores it.
-    // CODEX_ROUTER_CLAUDE_FAILOVER overrides the target; "off" disables.
+    // Provider substitution changes model semantics and therefore must be an
+    // explicit operator choice. CODEX_ROUTER_CLAUDE_FAILOVER can temporarily
+    // name a fallback while Claude is unavailable; the safe default is off.
     if (route?.provider === "claude-code" && CLAUDE_FAILOVER_SLUG !== "off") {
       const fallback = MODEL_BY_SLUG.get(CLAUDE_FAILOVER_SLUG);
-      if (fallback && readProviderSelection().includes(fallback.provider)) {
+      const claudeHealth = await serviceHealth(CLAUDE_CODE_HEALTH);
+      if (client.clientGone()) return;
+      if (
+        !(claudeHealth.reachable && claudeHealth.ready === true) &&
+        fallback &&
+        readProviderSelection().includes(fallback.provider)
+      ) {
         console.error(
           `[codex-router] claude-code backend unavailable; failing over ${route.slug} -> ${fallback.slug}`,
         );
@@ -916,24 +990,12 @@ async function handleResponses(request, response, requestUrl) {
       Array.isArray(payload.input) &&
       payload.input.at(-1)?.type === "compaction_trigger";
 
-    const controller = new AbortController();
-    request.once("aborted", () => {
-      clientGone = true;
-      controller.abort();
-    });
-    response.once("close", () => {
-      if (!response.writableEnded) {
-        clientGone = true;
-        controller.abort();
-      }
-    });
-
     if (route && (compactV1 || compactV2)) {
-      await handleRoutedCompaction(response, payload, route, controller.signal, compactV2);
+      await handleRoutedCompaction(response, payload, route, client.signal, compactV2);
       return;
     }
     if (!route && compactV1) {
-      await handleNativeCompaction(response, payload, request, controller.signal);
+      await handleNativeCompaction(response, payload, request, client.signal);
       return;
     }
 
@@ -970,7 +1032,7 @@ async function handleResponses(request, response, requestUrl) {
       target,
       headers,
       routedBody,
-      controller.signal,
+      client.signal,
     );
     const usageTransform = route
       ? new ResponseUsageTransform(upstream.headers.get("content-type") || "")
@@ -992,13 +1054,14 @@ async function handleResponses(request, response, requestUrl) {
   } catch (error) {
     // A client that walked away (canceled generation, closed stream) is not
     // a router failure; only surface errors the router or upstream produced.
-    if (clientGone) {
+    if (client.clientGone() || error?.code === "CLIENT_DISCONNECTED") {
       activity.finish(0);
       return;
     }
     activity.finish(500);
     throw error;
   } finally {
+    client.cleanup();
     activity.finish(response.statusCode);
   }
 }
@@ -1007,35 +1070,38 @@ async function handleNativePassthrough(request, response, requestUrl) {
   // Generic pass-through for native-only endpoints the app expects on the
   // configured base URL (e.g. /v1/alpha/search for the webrun tool).
   // The router must forward them to the ChatGPT backend instead of 404ing.
-  if (!requireCodexTransport(request, response)) return;
-  const encoded = await readRequestBody(request);
-  const body = decodeBody(encoded, request.headers["content-encoding"]);
-  const controller = new AbortController();
-  request.once("aborted", () => controller.abort());
-  response.once("close", () => {
-    if (!response.writableEnded) controller.abort();
-  });
-  const upstream = await fetch(nativeTarget(requestUrl.pathname, requestUrl.search), {
-    method: request.method,
-    headers: nativeHeaders(request),
-    body: body.length ? body : undefined,
-    signal: controller.signal,
-  });
-  const headers = {};
-  const contentType = upstream.headers.get("content-type");
-  if (contentType) headers["content-type"] = contentType;
-  response.writeHead(upstream.status, headers);
-  const buf = Buffer.from(await upstream.arrayBuffer());
-  response.end(buf);
+  const client = bindClientAbort(request, response);
+  try {
+    if (client.clientGone()) return;
+    if (!requireCodexTransport(request, response)) return;
+    const encoded = await readRequestBody(request);
+    if (client.clientGone()) return;
+    const body = decodeBody(encoded, request.headers["content-encoding"]);
+    const upstream = await fetchUpstream(
+      nativeTarget(requestUrl.pathname, requestUrl.search),
+      nativeHeaders(request),
+      body.length ? body : undefined,
+      client.signal,
+      { attempts: 1 },
+    );
+    await pipeResponse(upstream, response, HOP_BY_HOP_HEADERS);
+  } catch (error) {
+    if (client.clientGone()) return;
+    throw error;
+  } finally {
+    client.cleanup();
+  }
 }
 
 async function handleNativeImage(request, response, requestUrl) {
   const startedAt = Date.now();
   const activity = beginRequestActivity();
-  let clientGone = false;
+  const client = bindClientAbort(request, response, () => activity.finish(0));
   try {
+    if (client.clientGone()) return;
     if (!requireCodexTransport(request, response)) return;
     const encoded = await readRequestBody(request);
+    if (client.clientGone()) return;
     const body = decodeBody(encoded, request.headers["content-encoding"]);
     const payload = parseBody(body);
     const requestedModel =
@@ -1046,26 +1112,12 @@ async function handleNativeImage(request, response, requestUrl) {
       ...activityMetadataFromHeaders(request.headers),
     });
 
-    const controller = new AbortController();
-    request.once("aborted", () => {
-      clientGone = true;
-      controller.abort();
-    });
-    response.once("close", () => {
-      if (!response.writableEnded) {
-        clientGone = true;
-        controller.abort();
-      }
-    });
-
-    const upstream = await fetch(
+    const upstream = await fetchUpstream(
       nativeTarget(requestUrl.pathname, requestUrl.search),
-      {
-        method: "POST",
-        headers: nativeHeaders(request),
-        body,
-        signal: controller.signal,
-      },
+      nativeHeaders(request),
+      body,
+      client.signal,
+      { attempts: 1 },
     );
     await pipeResponse(upstream, response, HOP_BY_HOP_HEADERS);
     recordUsageEvent({
@@ -1080,13 +1132,14 @@ async function handleNativeImage(request, response, requestUrl) {
       );
     }
   } catch (error) {
-    if (clientGone) {
+    if (client.clientGone()) {
       activity.finish(0);
       return;
     }
     activity.finish(500);
     throw error;
   } finally {
+    client.cleanup();
     activity.finish(response.statusCode);
   }
 }
@@ -1166,7 +1219,7 @@ const server = http.createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
     const status = httpErrorStatus(error);
     console.error(
-      `[codex-router] request failed: ${error?.message || error}`,
+      `[codex-router] request failed: ${errorDiagnostic(error)}`,
     );
     if (!response.headersSent) {
       writeJson(response, status, {
