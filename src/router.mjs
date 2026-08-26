@@ -308,6 +308,16 @@ async function serviceHealth(url) {
   }
 }
 
+// A configured, enabled failover target makes the claude-code provider
+// non-blocking for health: its requests are still served, just by the
+// fallback. An uncovered unready provider would otherwise make the router
+// permanently unhealthy — and via the supervisor's startup race, boot-loop
+// the whole stack.
+function failoverCoversClaudeCode(enabled) {
+  const fallback = MODEL_BY_SLUG.get(CLAUDE_FAILOVER_SLUG);
+  return Boolean(fallback && enabled.has(fallback.provider));
+}
+
 async function healthPayload() {
   const enabled = new Set(readProviderSelection());
   const apiEnabled = [...PROVIDERS.values()].some(
@@ -324,7 +334,8 @@ async function healthPayload() {
     serviceHealth(GATEWAY_HEALTH),
   ]);
   const claudeCodeReady = !enabled.has("claude-code") ||
-    (claudeCode.reachable && claudeCode.ready === true);
+    (claudeCode.reachable && claudeCode.ready === true) ||
+    failoverCoversClaudeCode(enabled);
   return {
     ok: oauth.reachable && api.reachable && claudeCodeReady && gateway.reachable,
     service: "codex-router",
@@ -1149,6 +1160,16 @@ async function handleRequest(request, response) {
     request.url || "/",
     `http://${request.headers.host || LISTEN_HOST}`,
   );
+  if (request.method === "GET" && requestUrl.pathname === "/health/liveliness") {
+    writeJson(response, 200, {
+      ok: true,
+      service: "codex-router",
+      version: VERSION,
+      router: "ready",
+      activity: activityPayload(),
+    });
+    return;
+  }
   if (request.method === "GET" && requestUrl.pathname === "/health") {
     const health = await healthPayload();
     writeJson(response, health.ok ? 200 : 503, {
