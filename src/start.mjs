@@ -205,12 +205,18 @@ async function main() {
   const frontend = FRONTENDS[TARGET];
   const frontendService = frontend.service;
   const router = run(process.execPath, [path.join(SOURCE_ROOT, "src", frontend.script)]);
+  // The frontend shares the same starved boot as LiteLLM: catalog load and
+  // first health answer can take minutes under post-boot load, and the 1s
+  // probe timeout fails even when the server is up. A slow frontend used to
+  // tear down the whole stack (Promise.race on child exits), looping the
+  // service forever — so give it the same headroom as the gateway.
   await waitForHealth(
     loopback(PORTS.router, "/health"),
     {},
-    30_000,
+    300_000,
     frontendService,
     router,
+    10_000,
   );
 
   console.error(`[${frontendService}] ready (authenticated loopback endpoint)`);
